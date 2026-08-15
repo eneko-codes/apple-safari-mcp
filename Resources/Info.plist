@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- CFBundleName is the label macOS shows in System Settings > Privacy & Security >
+	     Automation, under this binary's entry for controlling Safari. -->
+	<key>CFBundleName</key>
+	<string>apple-safari-mcp</string>
+	<key>CFBundleIdentifier</key>
+	<string>codes.eneko.apple-safari-mcp</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+
+	<!-- Safari has no framework an external process can use to read its tabs: WebKit
+	     renders pages, it does not report the ones Safari already has open. The only
+	     route is Apple events, which need this key. Name verified against the tccd
+	     binary on macOS 26.5.
+
+	     Bookmarks and history are not covered by any usage description. They live in
+	     ~/Library/Safari, which is behind Full Disk Access — a grant with no plist key
+	     at all, given by hand in System Settings. -->
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Lets Claude read the tabs you already have open in Safari, and open, close or save pages you ask for, by controlling Safari through this local MCP server.</string>
+</dict>
+</plist>
