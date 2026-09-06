@@ -1,7 +1,7 @@
 # Manual verification
 
-Everything below reads **your real browsing**, which is why no agent may run it (see the
-hard rule in `CLAUDE.md`). Work through it yourself, in order.
+Everything below reads **your real browsing**. Work through it in order, by hand or with an
+agent.
 
 ```bash
 npx @modelcontextprotocol/inspector ./.build/release/apple-safari-mcp

@@ -384,24 +384,30 @@ static NSString *const SafariBundleIdentifier = @"com.apple.Safari";
         return nil;
     }
 
-    // CONFIRMED against a live Safari (2026-09-06, reported by the owner): with the
-    // developer setting on, `do JavaScript` can come back with neither a result nor a
-    // `lastError` — even for a trivial script — after Safari has been relaunched. `do
-    // JavaScript` coerces a script's own `undefined`/`null` to NSNull, never to a bare
-    // nil (see the class declaration above), so a nil `result` here is never a script's
-    // own value; it is Safari refusing the command without recording why. Left as a
-    // silent nil, this method would return nil without setting `error` — the Cocoa
-    // failure convention this method follows — and Swift's automatic bridging of that
-    // convention has no real NSError to throw, so it invents
-    // `Foundation._GenericObjCError error 0` instead of anything a caller can act on.
+    // CORRECTED after live testing against a real Safari (2026-09-06): the class
+    // declaration's claim that `do JavaScript` coerces `undefined`/`null` to `NSNull` is
+    // false. A script whose completion value is `undefined` — reproduced live with the
+    // literal script `undefined` — comes back as a bare Objective-C nil, same as any
+    // other absence of a result. That is an ordinary, successful outcome, not a failure,
+    // and this method must never return it as a silent nil regardless: Swift's automatic
+    // bridging of the `NSError **` convention treats *any* nil object return as a failed
+    // call, and when `error` is left unset (as it legitimately is here, since nothing
+    // went wrong) synthesizes `Foundation._GenericObjCError error 0` instead of
+    // anything a caller can act on — the exact symptom reported live earlier the same
+    // day, for a script as trivial as `1 + 1`. Substituting `NSNull` here is what
+    // guarantees this method never crosses the Swift boundary with a bare nil on
+    // success; `render(_:)` in BridgeSafariStore.swift already renders `NSNull` as
+    // "(no value)".
+    //
+    // The tradeoff this accepts, openly: every refusal seen so far — the developer
+    // setting being off, a script's own exception — sets `lastError` or raises, both
+    // handled above, so this line is only known to be reached for a genuine `undefined`.
+    // But nothing here can prove some other, still-unseen silent refusal could not also
+    // land here; if `run_javascript` ever again reports success with "(no value)" for a
+    // script that plainly should have produced something else, that unproven case is the
+    // first place to look.
     if (!result) {
-        if (error) {
-            *error = [self
-                errorWithCode:SafariBridgeErrorJavaScriptRefused
-                      message:@"Safari did not return a result for the script and did not "
-                              @"report why."];
-        }
-        return nil;
+        return [NSNull null];
     }
 
     // Guard the Objective-C/Swift boundary itself: only the classes `do JavaScript` is

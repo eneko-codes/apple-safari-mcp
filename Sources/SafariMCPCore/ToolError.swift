@@ -147,11 +147,6 @@ public enum ToolError: Error, Equatable {
 
                 If that is already on, the script itself may have thrown — Safari reports
                 a script's own exception the same way it reports this setting being off.
-
-                Seen in practice: Safari refusing every script, including a trivial one,
-                right after it was relaunched, with the setting confirmed on and no
-                further detail available. If this keeps happening only just after Safari
-                starts, try again once it has settled, or quit and relaunch Safari.
                 """
 
         case .libraryFileMissing(let what, let path):
