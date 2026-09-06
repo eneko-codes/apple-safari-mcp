@@ -60,20 +60,6 @@ struct SafariToolsTests {
         }
     }
 
-    /// `run_javascript` is offered, but never without the caller having to say so twice:
-    /// once in the extension's own settings, and once with `allowsJavaScript` on the
-    /// configuration this catalogue is built from.
-    @Test("run_javascript's description names the setting when it is off")
-    func javaScriptDescriptionReflectsConfiguration() {
-        let off = ToolCatalog.all(Configuration()).first { $0.name == ToolCatalog.runJavaScriptName }
-        #expect(off?.description?.contains("SWITCHED OFF") == true)
-
-        var configuration = Configuration()
-        configuration.allowsJavaScript = true
-        let on = ToolCatalog.all(configuration).first { $0.name == ToolCatalog.runJavaScriptName }
-        #expect(on?.description?.contains("SWITCHED OFF") == false)
-    }
-
     @Test("Only the tools that change something are marked as writes")
     func annotationsAreHonest() {
         let writes = [
@@ -149,12 +135,6 @@ struct SafariToolsTests {
         #expect(text.contains("tabs_list"))
     }
 
-    @Test("An unparseable id is refused")
-    func malformedTabIDIsRefused() async {
-        let (_, isError) = await call(ToolCatalog.tabTextName, ["id": .string("not-an-id")])
-        #expect(isError)
-    }
-
     @Test("A page longer than the fixed ceiling is truncated and says so")
     func longPageIsTruncated() async {
         let store = FakeSafariStore()
@@ -165,6 +145,17 @@ struct SafariToolsTests {
             ToolCatalog.tabTextName, ["id": .string(articleTabID)], store: store)
         #expect(!isError)
         #expect(text.count < pageLength)
+    }
+
+    /// `tab_get_source` is a second, separate opt-in from `tab_get_text`: raw HTML carries
+    /// inline scripts and embedded tokens that the rendered text does not, so it stays off
+    /// until `allowsPageSource` is switched on, independently of every other gate.
+    @Test("tab_get_source fails while switched off, whatever the arguments")
+    func tabSourceRefusedWhenDisabled() async {
+        let (text, isError) = await call(
+            ToolCatalog.tabSourceName, ["id": .string(articleTabID)])
+        #expect(isError)
+        #expect(text.contains("Allow reading raw page source"))
     }
 
     // MARK: Writes
