@@ -82,6 +82,10 @@ public struct SafariTools: Sendable {
         case ToolCatalog.readingListAddName:
             return try await addToReadingList(arguments)
 
+        case ToolCatalog.runJavaScriptName:
+            guard configuration.allowsJavaScript else { throw ToolError.javascriptDisabled }
+            return try await runJavaScript(arguments)
+
         default:
             throw ToolError.badArgument(
                 name: "name", reason: "'\(parameters.name)' is not a tool of this server")
@@ -129,6 +133,19 @@ public struct SafariTools: Sendable {
             throw ToolError.confirmationRequired(action: "Closing a tab")
         }
         return format.closed(try await store.closeTab(id))
+    }
+
+    private func runJavaScript(_ arguments: Arguments) async throws -> String {
+        let id = try arguments.tabID("id")
+        let script = try arguments.requiredString("script")
+        // Verified before the confirmation is checked, for the same reason close_tab
+        // does: a stale id is reported as stale rather than as a missing confirmation,
+        // so the caller does not re-send with confirm=true against the wrong tab.
+        _ = try await verified(id)
+        guard arguments.bool("confirm") else {
+            throw ToolError.confirmationRequired(action: "Running a script")
+        }
+        return format.javascriptResult(try await store.runJavaScript(id, script: script))
     }
 
     private func addToReadingList(_ arguments: Arguments) async throws -> String {

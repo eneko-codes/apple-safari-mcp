@@ -89,10 +89,11 @@ public struct Arguments {
     /// The only two schemes this server will open or save.
     ///
     /// The list is short on purpose. `javascript:` typed into a URL bar is the
-    /// do-JavaScript command by another route — it runs in the page's own origin, inside
-    /// whatever session is signed in — and this server deliberately does not expose that
-    /// command. `file:` reaches the disk and `data:` carries its payload inline; neither
-    /// is a page anybody asked to visit.
+    /// do-JavaScript command by another route, run in whatever page is loaded when the
+    /// URL is opened rather than against a tab and a script the caller named — `open_url`
+    /// stays a URL opener, not a second way to reach `run_javascript`. `file:` reaches
+    /// the disk and `data:` carries its payload inline; neither is a page anybody asked
+    /// to visit.
     public static let allowedSchemes: Set<String> = ["http", "https"]
 
     /// Returns the URL unchanged, or throws naming the scheme that was refused.

@@ -11,8 +11,10 @@ public enum ToolError: Error, Equatable {
     case unsupportedScheme(url: String, scheme: String)
     case confirmationRequired(action: String)
     case pageSourceDisabled
+    case javascriptDisabled
     case fullDiskAccessRequired(what: String, path: String)
     case libraryFileMissing(what: String, path: String)
+    case javascriptRefused(String)
     case storeFailure(String)
 
     public var message: String {
@@ -122,6 +124,29 @@ public enum ToolError: Error, Equatable {
                 Then restart Claude Desktop: the permission is resolved when the process
                 starts. Tabs, Reading List and open/close keep working without it — they
                 go through Safari, not through the disk.
+                """
+
+        case .javascriptDisabled:
+            return """
+                Running JavaScript is switched off for this extension.
+
+                Turn it on in Claude Desktop → Settings → Extensions → Apple Safari → \
+                "Allow running JavaScript". Note that this is not scoped to one site: \
+                once on, run_javascript works in any tab it is given.
+                """
+
+        case .javascriptRefused(let detail):
+            return """
+                Safari refused to run the script: \(detail)
+
+                The one cause seen in practice is Safari's own developer setting for this
+                exact command being off, which is off by default on every Mac:
+
+                  Safari → Settings → Advanced → turn on "Show features for web
+                  developers" → Develop menu → Allow JavaScript from Apple Events
+
+                If that is already on, the script itself may have thrown — Safari reports
+                a script's own exception the same way it reports this setting being off.
                 """
 
         case .libraryFileMissing(let what, let path):

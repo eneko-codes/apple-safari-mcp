@@ -12,14 +12,18 @@
 //
 //     sdef /Applications/Safari.app | grep 'name="text"'
 //
+// `doJavaScript:in:` was confirmed the same way, against the generated header itself
+// (`sdp -fh`), because the command's Objective-C shape is not obvious from the sdef XML
+// alone: it is declared once, on the class-extension shared by every scriptable object,
+// with the target as an explicit second argument rather than as an implicit receiver.
+//
 // Scripting Bridge camel-cases dictionary names: `current tab` becomes `currentTab`, and
 // the command `add reading list item ... and preview text ... with title ...` becomes
 // `addReadingListItem:andPreviewText:withTitle:`.
 //
-// Two members are deliberately absent. `do JavaScript` evaluates arbitrary code inside a
-// logged-in browsing session; `email contents` sends mail. Neither is declared, so
-// neither can be sent from this process. For the same reason nothing is declared "in case
-// it is useful later": every member here is one this server sends.
+// One member is deliberately absent: `email contents`, which sends mail on the owner's
+// behalf. Nothing else is declared "in case it is useful later" — every member here is one
+// this server sends.
 
 /// `close` takes a save option even for a tab, which never has one. Only the four-char
 /// code for "no" is declared, because it is the only one this server passes.
@@ -53,6 +57,10 @@ typedef NS_ENUM(unsigned int, SafariSaveOptions) {
 - (void)addReadingListItem:(NSString *)item
             andPreviewText:(nullable NSString *)previewText
                  withTitle:(nullable NSString *)title;
+/// `do JavaScript "<script>" in <target>` — declared on the application because that is
+/// where `sdp -fh` puts it, with the tab or document as an explicit target rather than an
+/// implicit receiver. Returns whatever the script evaluates to.
+- (nullable id)doJavaScript:(NSString *)script in:(nullable id)target;
 @end
 
 NSString *const SafariBridgeErrorDomain = @"codes.eneko.apple-safari-mcp";
@@ -326,6 +334,44 @@ static NSString *const SafariBundleIdentifier = @"com.apple.Safari";
     // to splice into, which is the injection guarantee Scripting Bridge buys.
     [application addReadingListItem:url andPreviewText:previewText withTitle:title];
     return YES;
+}
+
++ (nullable id)runJavaScript:(NSString *)script
+                inTabAtIndex:(NSInteger)index
+                    inWindow:(NSInteger)windowIdentifier
+                       error:(NSError **)error {
+    SBApplication<SafariApplication> *application = [self applicationWithError:error];
+    if (!application) return nil;
+
+    id<SafariTab> tab = [self tabAtIndex:index
+                          inWindowNumber:windowIdentifier
+                           ofApplication:application
+                                   error:error];
+    if (!tab) return nil;
+
+    id result = [application doJavaScript:script in:(id)tab];
+
+    // `do JavaScript` reports its own failure through SBApplication's `lastError`
+    // (an NSError, confirmed by the compiler's own declared return type — not the
+    // NSDictionary an NSAppleScript result would give) rather than through the
+    // throws-style NSError this file's own methods use, because it is a command sent to
+    // the application rather than a property read or write on one object. The one cause
+    // on record is Safari's own "Allow JavaScript from Apple Events" developer setting
+    // being off.
+    //
+    // NEEDS VERIFICATION: confirm the exact localizedDescription this produces against a
+    // live Safari with that setting off — see verification.md. Untested against a real
+    // Safari, by design: this file must never touch the owner's browsing session during
+    // development.
+    NSError *failure = [(SBApplication *)application lastError];
+    if (failure) {
+        if (error) {
+            *error = [self errorWithCode:SafariBridgeErrorJavaScriptRefused
+                                 message:failure.localizedDescription];
+        }
+        return nil;
+    }
+    return result;
 }
 
 @end

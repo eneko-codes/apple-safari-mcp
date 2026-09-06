@@ -93,6 +93,14 @@ public protocol SafariStore: Sendable {
     /// back, so nothing here can confirm what is already in it.
     func addReadingListItem(url: String, title: String?, previewText: String?) async throws
 
+    /// Runs `script` inside the tab named by `id` and returns what it evaluated to,
+    /// rendered as text.
+    ///
+    /// No restriction on which tab: this runs exactly what the page's own script could
+    /// run, in whatever session that tab holds. The caller — `SafariTools` — is what
+    /// verifies the id still points at the page it was minted for before this is reached.
+    func runJavaScript(_ id: TabID, script: String) async throws -> JavaScriptResult
+
     /// Every bookmark, flattened, with the folder path each one sits in.
     ///
     /// Returned whole rather than filtered, because a bookmark file holds hundreds of

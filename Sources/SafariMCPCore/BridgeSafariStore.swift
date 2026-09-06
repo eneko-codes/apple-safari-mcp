@@ -70,6 +70,11 @@ public struct BridgeSafariStore: SafariStore {
         {
             return .tabGone(id: "(the tab it named)")
         }
+        if failure.domain == SafariBridgeErrorDomain,
+            failure.code == SafariBridgeError.javaScriptRefused.rawValue
+        {
+            return .javascriptRefused(error.localizedDescription)
+        }
         return .storeFailure(error.localizedDescription)
     }
 
@@ -180,6 +185,41 @@ public struct BridgeSafariStore: SafariStore {
         } catch {
             throw storeFailure(error)
         }
+    }
+
+    public func runJavaScript(_ id: TabID, script: String) async throws -> JavaScriptResult {
+        let raw: Any?
+        do {
+            raw = try SafariBridge.runJavaScript(
+                script, inTabAt: id.index, inWindow: id.windowID)
+        } catch {
+            let failure = error as NSError
+            guard failure.domain == SafariBridgeErrorDomain,
+                failure.code == SafariBridgeError.windowNotFound.rawValue
+                    || failure.code == SafariBridgeError.tabNotFound.rawValue
+            else { throw storeFailure(error) }
+            throw ToolError.tabGone(id: id.encoded)
+        }
+        return JavaScriptResult(id: id, script: script, result: Self.render(raw))
+    }
+
+    /// Safari coerces a script's return value to a Foundation type crossing the Apple
+    /// event boundary — `NSString`, `NSNumber`, `NSNull` for `undefined`/`null`, or an
+    /// `NSArray`/`NSDictionary` of those for an object or array. Rendered as JSON where
+    /// that is possible, because it is what the model already reads everywhere else in
+    /// this response; `description` is the fallback for the rare value JSON cannot carry
+    /// (Safari has never been observed to return one, but this must not crash if it did).
+    static func render(_ value: Any?) -> String {
+        guard let value, !(value is NSNull) else { return "(no value)" }
+        if let string = value as? String { return string }
+        if JSONSerialization.isValidJSONObject(value),
+            let data = try? JSONSerialization.data(
+                withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes]),
+            let text = String(data: data, encoding: .utf8)
+        {
+            return text
+        }
+        return "\(value)"
     }
 
     // MARK: Library

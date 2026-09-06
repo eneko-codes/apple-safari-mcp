@@ -12,9 +12,10 @@ import MCP
 /// to serve is kept all the same: the destructive one says `close`, and it is the only
 /// tool in the list that requires `confirm=true`.
 ///
-/// **`do JavaScript` is deliberately absent**, and its absence is a decision rather than
-/// an omission — see the README. Safari's dictionary offers it; this server does not, and
-/// the Objective-C bridge does not even declare the selector.
+/// **`run_javascript` carries no domain restriction** — see the README. Safari's own `do
+/// JavaScript` runs in whatever tab it targets, and this server does not narrow that: the
+/// tool is off by default, gated by `allowsJavaScript` the same way `tab_get_source` is
+/// gated, and its description says plainly what it can do once it is on.
 public enum ToolCatalog {
 
     /// Names are constants rather than being read back off a `Tool`, because a tool whose
@@ -29,6 +30,7 @@ public enum ToolCatalog {
     public static let readingListAddName = "reading_list_add"
     public static let bookmarksListName = "bookmarks_list"
     public static let historySearchName = "history_search"
+    public static let runJavaScriptName = "run_javascript"
 
     /// `tabSource` alone is built from the live configuration: whether it is enabled is
     /// the one thing left in `Configuration` that varies per instance. Every other
@@ -37,6 +39,7 @@ public enum ToolCatalog {
         [
             status, tabsList, tabText, tabSource(configuration), openURL,
             closeTab, readingListAdd, bookmarksList, historySearch,
+            runJavaScript(configuration),
         ]
     }
 
@@ -229,9 +232,10 @@ public enum ToolCatalog {
             Opens a URL in a new Safari tab, in the frontmost window, and returns the id of \
             the tab it made. Safari must already be running.
 
-            Only http and https are opened. A javascript: URL is refused — it is the \
-            do-JavaScript command by another route, and this server does not run code in \
-            the person's browsing session.
+            Only http and https are opened. A javascript: URL is refused: it is the \
+            do-JavaScript command reached through a URL instead of a tab id and a script \
+            argument. run_javascript is the tool for running code, against a tab already \
+            open.
             """,
         inputSchema: object(
             properties: [
@@ -292,4 +296,48 @@ public enum ToolCatalog {
         annotations: .init(
             readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true)
     )
+
+    static func runJavaScript(_ configuration: Configuration) -> Tool {
+        Tool(
+            name: runJavaScriptName,
+            title: "Run JavaScript in an open tab",
+            description: """
+                Runs JavaScript inside a tab already open in Safari and returns what it \
+                evaluated to. \
+                \(configuration.allowsJavaScript
+                    ? "Enabled in this extension's settings."
+                    : "SWITCHED OFF in this extension's settings — every call fails until it is turned on.")
+
+                This is full page access, exactly as if the page's own script had run: it \
+                can read whatever the page can read and do whatever a click on the page \
+                could do — fill and submit a form, follow a link, read a value out of the \
+                DOM. Nothing here restricts which tab: it runs in the session that tab \
+                holds, signed in or not, so choose the tab as deliberately as the script \
+                itself. Requires confirm=true, because a submitted form or a followed \
+                link is not undone by closing the tab afterwards.
+
+                Also needs Safari's own "Allow JavaScript from Apple Events" developer \
+                setting — Safari → Settings → Advanced → Show features for web developers \
+                → Develop menu — which is off by default on every Mac. A call fails with \
+                that instruction until it is turned on once, by hand.
+
+                Needs an id from tabs_list. Returns the result as text: a string as \
+                itself, an object or array as JSON, and "(no value)" for a script that \
+                returned nothing.
+                """,
+            inputSchema: object(
+                properties: [
+                    "id": tabIDProperty,
+                    "script": string("The JavaScript to run, evaluated as the body of a function."),
+                    "confirm": .object([
+                        "type": .string("boolean"),
+                        "description": .string("Must be true. Without it the call is refused."),
+                    ]),
+                ],
+                required: ["id", "script", "confirm"]),
+            annotations: .init(
+                readOnlyHint: false, destructiveHint: true, idempotentHint: false,
+                openWorldHint: true)
+        )
+    }
 }

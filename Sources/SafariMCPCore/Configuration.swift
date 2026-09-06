@@ -15,6 +15,16 @@ public struct Configuration: Sendable, Equatable {
     /// over without anyone having decided to.
     public var allowsPageSource: Bool = false
 
+    /// Whether `run_javascript` may run at all. Off unless deliberately switched on.
+    ///
+    /// Not scoped by site — there is no allowlist here, by design: once this is on,
+    /// `run_javascript` runs in whatever tab it is given, the same as Safari's own `do
+    /// JavaScript` does for a person driving it by hand. The boundary this flag draws is
+    /// coarser than `allowsPageSource`'s — on or off for the whole capability — because
+    /// there is no narrower boundary a whitelist here would actually enforce: the tab is
+    /// chosen per call, not fixed at configuration time.
+    public var allowsJavaScript: Bool = false
+
     public init() {}
 
     /// Ceiling on how much of one page crosses the boundary, in characters. A long
@@ -66,6 +76,13 @@ public struct Configuration: Sendable, Equatable {
                 // value all leave the safer default in place.
                 if let value, !isPlaceholder(value) {
                     configuration.allowsPageSource = ["true", "yes", "1"].contains(
+                        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+                }
+                index += 2
+
+            case "--allow-javascript":
+                if let value, !isPlaceholder(value) {
+                    configuration.allowsJavaScript = ["true", "yes", "1"].contains(
                         value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
                 }
                 index += 2

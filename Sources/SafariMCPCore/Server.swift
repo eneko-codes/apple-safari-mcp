@@ -4,7 +4,7 @@ import MCP
 public enum SafariMCPServer {
 
     public static let name = "apple-safari-mcp"
-    public static let version = "1.0.0"
+    public static let version = "1.1.0"
 
     /// Returned from `initialize`. It carries what per-tool descriptions cannot state
     /// once: the id workflow, the two unrelated permissions, and what reading a tab
@@ -27,8 +27,13 @@ public enum SafariMCPServer {
         web page. tab_get_source returns raw HTML and is off unless it was switched on in \
         the extension's settings.
 
-        This server cannot run JavaScript. Safari's dictionary offers the command; it is \
-        deliberately not exposed, and a javascript: URL is refused too.
+        run_javascript runs code inside a tab you name, exactly as the page's own script \
+        could — no restriction on which tab, so choose it as deliberately as the script \
+        itself. Off unless switched on in the extension's settings, and separately gated \
+        by Safari's own "Allow JavaScript from Apple Events" developer setting, off by \
+        default on every Mac. A javascript: URL passed to open_url is still refused: it \
+        is the same command reached by a different route, and run_javascript is the one \
+        way in.
 
         close_tab is irreversible from here: a closed tab takes its scroll position, its \
         back history and anything typed into the page with it. It requires confirm=true.

@@ -27,6 +27,12 @@ final class FakeSafariStore: SafariStore, @unchecked Sendable {
     private(set) var closedTabs: [TabID] = []
     private(set) var readingListItems: [(url: String, title: String?, previewText: String?)] = []
     private(set) var historyQueries: [(query: String?, from: Date?, to: Date?, limit: Int)] = []
+    private(set) var scriptsRun: [(id: TabID, script: String)] = []
+
+    /// What `runJavaScript` returns to whichever test set it, keyed by the exact script
+    /// text — a fixed default lets most tests ignore this and still get an answer.
+    var scriptResults: [String: String] = [:]
+    var javascriptFailure: ToolError?
 
     init(
         state: SafariAvailability = .ready,
@@ -92,6 +98,14 @@ final class FakeSafariStore: SafariStore, @unchecked Sendable {
 
     func addReadingListItem(url: String, title: String?, previewText: String?) async throws {
         readingListItems.append((url, title, previewText))
+    }
+
+    func runJavaScript(_ id: TabID, script: String) async throws -> JavaScriptResult {
+        _ = try liveTab(id)
+        if let javascriptFailure { throw javascriptFailure }
+        scriptsRun.append((id, script))
+        return JavaScriptResult(
+            id: id, script: script, result: scriptResults[script] ?? "(no value)")
     }
 
     func bookmarks() async throws -> [Bookmark] {

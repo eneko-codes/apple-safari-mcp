@@ -89,10 +89,21 @@ two file-backed ones, so `Dispatch` never has to know which kind a call is.
 
 ## Invariants worth protecting
 
-- **`do JavaScript` is not exposed, and must never be.** Safari's dictionary offers it. It
-  would run arbitrary code inside whatever session the owner has open — their bank, their
-  mail — and it needs a developer-menu setting enabled by hand besides. No tool here is
-  worth that. A test asserts no tool name contains `script`.
+- **`run_javascript` sends Safari's `do JavaScript` against whatever tab id it is given,
+  with no domain restriction of any kind — a deliberate choice, not an oversight.** The
+  command runs arbitrary code inside that tab's session exactly as the page's own scripts
+  could: the owner's bank, their mail, anything open, if that is the tab addressed. Three
+  gates stand in front of it: `Configuration.allowsJavaScript`, off by default and wired to
+  its own checkbox in the extension's settings (the same mechanism `allowsPageSource`
+  uses, `user_config` included — the wiring `tab_get_source` is still missing); Claude
+  Desktop's own generic per-tool switch, which every tool gets regardless; and Safari's own
+  "Allow JavaScript from Apple Events" developer setting (Safari → Settings → Advanced →
+  Show features for web developers → Develop menu → Allow JavaScript from Apple Events),
+  off by default on every Mac — without it the command fails and this server reports the
+  exact setting to enable, rather than the call silently doing nothing. The tool's own
+  description carries the warning a whitelist would
+  otherwise encode in code: state plainly, every time, that this executes in whatever tab
+  is named and that the caller is responsible for choosing the right one.
 - **A `TabID` carries a fingerprint of the URL it was minted for.** Safari addresses a tab by
   position, and positions shift the moment a tab is opened, closed or dragged. Without the
   fingerprint, a stale id would silently read whatever moved into that slot — the wrong page,
