@@ -349,7 +349,24 @@ static NSString *const SafariBundleIdentifier = @"com.apple.Safari";
                                    error:error];
     if (!tab) return nil;
 
-    id result = [application doJavaScript:script in:(id)tab];
+    // Scripting Bridge can raise an NSException instead of setting `lastError` below —
+    // seen for `do JavaScript` specifically, where certain Apple-event-level refusals
+    // never reach the property-style error channel the rest of this file relies on. Left
+    // uncaught here, that exception would cross into Swift as a process-terminating
+    // signal rather than a catchable error.
+    id result = nil;
+    @try {
+        result = [application doJavaScript:script in:(id)tab];
+    } @catch (NSException *exception) {
+        if (error) {
+            *error = [self
+                errorWithCode:SafariBridgeErrorJavaScriptRefused
+                      message:[NSString stringWithFormat:@"%@: %@", exception.name,
+                                                          exception.reason
+                                                              ?: @"(no reason given)"]];
+        }
+        return nil;
+    }
 
     // `do JavaScript` reports its own failure through SBApplication's `lastError`
     // (an NSError, confirmed by the compiler's own declared return type — not the
@@ -358,11 +375,6 @@ static NSString *const SafariBundleIdentifier = @"com.apple.Safari";
     // the application rather than a property read or write on one object. The one cause
     // on record is Safari's own "Allow JavaScript from Apple Events" developer setting
     // being off.
-    //
-    // NEEDS VERIFICATION: confirm the exact localizedDescription this produces against a
-    // live Safari with that setting off — see verification.md. Untested against a real
-    // Safari, by design: this file must never touch the owner's browsing session during
-    // development.
     NSError *failure = [(SBApplication *)application lastError];
     if (failure) {
         if (error) {
@@ -370,6 +382,43 @@ static NSString *const SafariBundleIdentifier = @"com.apple.Safari";
                                  message:failure.localizedDescription];
         }
         return nil;
+    }
+
+    // CORRECTED after live testing against a real Safari (2026-09-06): the class
+    // declaration's claim that `do JavaScript` coerces `undefined`/`null` to `NSNull` is
+    // false. A script whose completion value is `undefined` — reproduced live with the
+    // literal script `undefined` — comes back as a bare Objective-C nil, same as any
+    // other absence of a result. That is an ordinary, successful outcome, not a failure,
+    // and this method must never return it as a silent nil regardless: Swift's automatic
+    // bridging of the `NSError **` convention treats *any* nil object return as a failed
+    // call, and when `error` is left unset (as it legitimately is here, since nothing
+    // went wrong) synthesizes `Foundation._GenericObjCError error 0` instead of
+    // anything a caller can act on — the exact symptom reported live earlier the same
+    // day, for a script as trivial as `1 + 1`. Substituting `NSNull` here is what
+    // guarantees this method never crosses the Swift boundary with a bare nil on
+    // success; `render(_:)` in BridgeSafariStore.swift already renders `NSNull` as
+    // "(no value)".
+    //
+    // The tradeoff this accepts, openly: every refusal seen so far — the developer
+    // setting being off, a script's own exception — sets `lastError` or raises, both
+    // handled above, so this line is only known to be reached for a genuine `undefined`.
+    // But nothing here can prove some other, still-unseen silent refusal could not also
+    // land here; if `run_javascript` ever again reports success with "(no value)" for a
+    // script that plainly should have produced something else, that unproven case is the
+    // first place to look.
+    if (!result) {
+        return [NSNull null];
+    }
+
+    // Guard the Objective-C/Swift boundary itself: only the classes `do JavaScript` is
+    // documented to hand back are let through unchanged. Anything else crosses as its
+    // `-description` rather than as an unexamined `id` Swift has never been asked to
+    // bridge from this call.
+    if (![result isKindOfClass:[NSString class]] && ![result isKindOfClass:[NSNumber class]]
+        && ![result isKindOfClass:[NSArray class]]
+        && ![result isKindOfClass:[NSDictionary class]]
+        && ![result isKindOfClass:[NSNull class]]) {
+        return [result description];
     }
     return result;
 }

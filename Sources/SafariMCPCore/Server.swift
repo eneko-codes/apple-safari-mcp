@@ -4,7 +4,7 @@ import MCP
 public enum SafariMCPServer {
 
     public static let name = "apple-safari-mcp"
-    public static let version = "1.1.0"
+    public static let version = "1.1.1"
 
     /// Returned from `initialize`. It carries what per-tool descriptions cannot state
     /// once: the id workflow, the two unrelated permissions, and what reading a tab
