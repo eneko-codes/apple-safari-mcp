@@ -92,6 +92,10 @@ public struct Format: Sendable {
             ("bookmarks", describe(library.bookmarks)),
             ("history", describe(library.history)),
             ("raw page source", configuration.allowsPageSource ? "allowed" : "off"),
+            (
+                "run javascript",
+                configuration.allowsJavaScript ? "allowed, in any tab" : "off"
+            ),
             ("page limit", "\(Configuration.pageCharacterLimit) characters"),
             ("default results", "\(Configuration.searchLimit)"),
         ])
@@ -196,6 +200,18 @@ public struct Format: Sendable {
 
         Reopening it is a menu gesture — History → Reopen Last Closed Tab — that only the \
         person at the keyboard can make, and any text typed into the page is gone.
+        """
+    }
+
+    public func javascriptResult(_ result: JavaScriptResult) -> String {
+        """
+        Ran the script.
+
+        \(Self.block([
+            ("tab", result.id.encoded),
+        ]))
+
+        Result: \(result.result)
         """
     }
 

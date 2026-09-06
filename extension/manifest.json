@@ -2,9 +2,9 @@
   "manifest_version": "0.3",
   "name": "apple-safari-mcp",
   "display_name": "Safari",
-  "version": "1.0.0",
-  "description": "Read the text of your open Safari tabs, and open or close them",
-  "long_description": "A local MCP server written in Swift that gives Claude access to Safari on this Mac.\n\nThe valuable tool is tab_get_text: it returns the rendered text of a tab you already have open. No network fetch, no separate login — whatever Safari loaded is what Claude reads.\n\nKnow what that means before enabling it. A page behind a login or a paywall is readable, because Safari already rendered it. tabs_list shows every open tab in every window.\n\nSafari must be running, and the grant appears under System Settings → Privacy & Security → Automation.\n\n“do JavaScript” is deliberately not exposed. Safari's dictionary offers it; it would run arbitrary code inside a logged-in session, and no tool here is worth that.\n\nBookmarks and history need Full Disk Access, granted by hand. Without it those two tools say so rather than returning nothing.\n\nNot affiliated with or endorsed by Apple Inc.",
+  "version": "1.1.0",
+  "description": "Read the text of your open Safari tabs, open or close them, and run JavaScript in one",
+  "long_description": "A local MCP server written in Swift that gives Claude access to Safari on this Mac.\n\nThe valuable tool is tab_get_text: it returns the rendered text of a tab you already have open. No network fetch, no separate login — whatever Safari loaded is what Claude reads.\n\nKnow what that means before enabling it. A page behind a login or a paywall is readable, because Safari already rendered it. tabs_list shows every open tab in every window.\n\nSafari must be running, and the grant appears under System Settings → Privacy & Security → Automation.\n\nrun_javascript runs code inside a tab you name, exactly as the page's own script could — no restriction on which tab. Off by default; turn it on below only once you mean for it to work in any tab, signed in or not. It also needs Safari's own “Allow JavaScript from Apple Events” developer setting, off by default on every Mac.\n\nBookmarks and history need Full Disk Access, granted by hand. Without it those two tools say so rather than returning nothing.\n\nNot affiliated with or endorsed by Apple Inc.",
   "author": {
     "name": "eneko-codes",
     "url": "https://github.com/eneko-codes"
@@ -28,7 +28,10 @@
     "entry_point": "server/apple-safari-mcp",
     "mcp_config": {
       "command": "${__dirname}/server/apple-safari-mcp",
-      "args": [],
+      "args": [
+        "--allow-javascript",
+        "${user_config.allow_javascript}"
+      ],
       "env": {}
     }
   },
@@ -68,8 +71,21 @@
     {
       "name": "history_search",
       "description": "Finds pages Safari has visited, matching the text against the URL and the page title and bounded by a date range. Newest first."
+    },
+    {
+      "name": "run_javascript",
+      "description": "Runs JavaScript inside a tab already open in Safari and returns what it evaluated to. SWITCHED OFF in this extension's settings — every call fails until it is turned on below."
     }
   ],
+  "user_config": {
+    "allow_javascript": {
+      "type": "boolean",
+      "title": "Allow running JavaScript",
+      "description": "Lets run_javascript execute code inside any tab you point it at — signed in or not, whichever tab is named. Not limited to one site. Also needs Safari's own \"Allow JavaScript from Apple Events\" developer setting, off by default.",
+      "default": false,
+      "required": false
+    }
+  },
   "compatibility": {
     "claude_desktop": ">=0.10.0",
     "platforms": [

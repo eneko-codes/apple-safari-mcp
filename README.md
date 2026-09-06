@@ -33,6 +33,7 @@ Not affiliated with or endorsed by Apple Inc.
 | `reading_list_add` | write | Saves a URL to Safari's Reading List, with an optional title and preview line. Only `http` and `https`. |
 | `bookmarks_list` | read | Saved bookmarks, with title, URL and folder path. Needs Full Disk Access. |
 | `history_search` | read | Visited pages, matched by URL/title text and a date range, newest first. Needs Full Disk Access. |
+| `run_javascript` | **destructive** | Runs JavaScript in a tab already open, in whatever session it holds. Requires `confirm: true`. **Off by default** — see [Tool switches](#tool-switches). |
 
 ## The rules worth knowing before you use it
 
@@ -48,11 +49,15 @@ the URL would return. No network fetch happens, so it reads exactly what the per
 sees — a logged-in dashboard, a paywalled article, a half-filled form. Treat it as the
 person's own screen, not as a public web page.
 
-**No JavaScript execution is possible or exposed.** Safari's scripting dictionary offers
-`do JavaScript`; this server does not expose it, and the Objective-C bridge does not even
-declare the selector. A `javascript:` URL passed to `open_url` or `reading_list_add` is
-refused for the same reason — it is the same command wearing a different hat. A test
-asserts no tool name in the catalogue contains `script`.
+**`run_javascript` has no domain restriction.** Once it is switched on, it runs code in
+whatever tab it is given — the same as Safari's own `do JavaScript` does for a person
+driving it by hand, signed in or not. Choosing the right tab is the caller's job; nothing
+here narrows it further. It also needs Safari's own **"Allow JavaScript from Apple
+Events"** developer setting (Safari → Settings → Advanced → Show features for web
+developers → Develop menu), off by default on every Mac — a call fails with that exact
+instruction until it is turned on once, by hand. A `javascript:` URL passed to `open_url`
+or `reading_list_add` is still refused: it is the same command reached by a different
+route, and `run_javascript` is the one way in.
 
 **`close_tab` is irreversible from here.** A closed tab takes its scroll position, its
 form state and its back history with it; "Reopen Last Closed Tab" is a menu gesture only
@@ -126,6 +131,18 @@ System Settings → Privacy & Security → Full Disk Access → + →
 Restart Claude Desktop afterwards: the grant is resolved when the process starts.
 Everything else — tabs, opening, closing, the Reading List — works without it.
 
+**"Allow JavaScript from Apple Events", separately, only for `run_javascript`.** This is
+Safari's own developer setting, off by default on every Mac, and this server cannot flip
+it — it is granted entirely by hand:
+
+```
+Safari → Settings → Advanced → turn on "Show features for web developers"
+→ Develop menu → Allow JavaScript from Apple Events
+```
+
+Without it, `run_javascript` fails and names this exact setting. Everything else works
+without it — this is the one tool that needs it.
+
 ### Signing, and why it is not optional
 
 `swift build` leaves a signature the linker generated, flagged `linker-signed`. macOS
@@ -161,10 +178,15 @@ applies `Resources/entitlements.plist` so hardened Apple events keep working.
 ## Tool switches
 
 Every tool can be turned on and off individually in Claude Desktop → Settings →
-Extensions, because the bundle declares all nine in its manifest — that is where policy
+Extensions, because the bundle declares all ten in its manifest — that is where policy
 lives, not in this code. Consider leaving `tab_get_source`, `bookmarks_list` and
 `history_search` off by default: the first exposes raw HTML of a logged-in page, and the
 other two need a standing disk permission most people will not want to grant right away.
+
+**`run_javascript` has its own settings checkbox — "Allow running JavaScript" — separate
+from the per-tool switch above, because it gates the code path itself
+(`Configuration.allowsJavaScript`), not just whether the tool can be called. Leave it off
+until you mean for Claude to run code in any tab you point it at.**
 
 **Reinstalling may reset the switches.** Check them after every install.
 
@@ -205,6 +227,12 @@ section.
   page open and `tab_get_text`.
 - **`open_url` and `reading_list_add` open only `http` and `https`.** `javascript:`,
   `file:` and `data:` are refused outright.
+- **The exact wording `run_javascript` reports when "Allow JavaScript from Apple Events"
+  is off is unverified.** The bridge detects the refusal and surfaces whatever
+  `SBApplication`'s `lastError` says, but the precise message has not been checked
+  against a live Safari with that setting off — see `verification.md`. This is
+  deliberate, not an oversight: the codebase must never touch the owner's own Safari
+  during development.
 - **Safari must already be running.** This server will not launch it — starting a browser
   is a visible side effect nobody asked for.
 - **Page text and source are capped at 40,000 characters per call.** A long page is

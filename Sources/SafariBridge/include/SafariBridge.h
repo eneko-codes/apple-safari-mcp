@@ -14,6 +14,10 @@ typedef NS_ERROR_ENUM(SafariBridgeErrorDomain, SafariBridgeError){
     SafariBridgeErrorWindowNotFound,
     SafariBridgeErrorTabNotFound,
     SafariBridgeErrorOpenRefused,
+    /// Safari refused `do JavaScript` outright — not a script error, a policy one. The
+    /// only known cause is Safari's own "Allow JavaScript from Apple Events" developer
+    /// setting being off, which is off by default on every Mac.
+    SafariBridgeErrorJavaScriptRefused,
 };
 
 /// Everything this project sends to Safari, in Objective-C.
@@ -39,10 +43,11 @@ typedef NS_ERROR_ENUM(SafariBridgeErrorDomain, SafariBridgeError){
 /// the page it was minted for, how much text to keep, how to format — stays in Swift,
 /// where the tests can reach it.
 ///
-/// Two members of Safari's dictionary are deliberately absent and must stay absent.
-/// `do JavaScript` runs arbitrary code inside a logged-in browsing session; `email
-/// contents` sends mail. Neither is declared here, which makes both unreachable from this
-/// process — the narrow protocol is the safeguard, not a policy check somewhere upstream.
+/// One member of Safari's dictionary is deliberately absent and must stay absent: `email
+/// contents`, which sends mail on the owner's behalf. `do JavaScript` is declared and
+/// reachable through `runJavaScript:inTabAtIndex:inWindow:error:` — it runs arbitrary code
+/// inside whatever tab it targets, with no restriction on which one, so the caller in
+/// Swift is trusted to have a reason for the tab it names.
 @interface SafariBridge : NSObject
 
 /// Whether Safari is running. This server never launches it.
@@ -90,6 +95,19 @@ typedef NS_ERROR_ENUM(SafariBridgeErrorDomain, SafariBridgeError){
 + (BOOL)addReadingListItem:(NSString *)url
                      title:(nullable NSString *)title
                previewText:(nullable NSString *)previewText
+                     error:(NSError **)error;
+
+/// Runs `script` inside the tab at `index` in `windowIdentifier` and returns whatever the
+/// script evaluates to, coerced to a Foundation type by Safari itself — a string, a
+/// number, a boolean, an array or dictionary of those, or `NSNull` for `undefined`.
+///
+/// This is Safari's own `do JavaScript "..." in tab N of window M` — full page access,
+/// exactly as if the page's own script had run: it can read what the page can read and do
+/// what a click on the page could do. Nothing here restricts which tab: the caller decides,
+/// the same way `tabAtIndex:inWindow:` already trusts its caller for every other command.
++ (nullable id)runJavaScript:(NSString *)script
+              inTabAtIndex:(NSInteger)index
+                  inWindow:(NSInteger)windowIdentifier
                      error:(NSError **)error;
 
 @end

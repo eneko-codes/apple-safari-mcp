@@ -193,3 +193,19 @@ public struct OpenedTab: Sendable, Equatable {
         self.url = url
     }
 }
+
+public struct JavaScriptResult: Sendable, Equatable {
+    public let id: TabID
+    public let script: String
+    /// The script's return value, already rendered as text. JavaScript's own `undefined`
+    /// and `null` are indistinguishable by the time this is built: Safari coerces both to
+    /// `NSNull` crossing the Apple event boundary, and nothing on this side of it can
+    /// recover which one a script actually returned.
+    public let result: String
+
+    public init(id: TabID, script: String, result: String) {
+        self.id = id
+        self.script = script
+        self.result = result
+    }
+}

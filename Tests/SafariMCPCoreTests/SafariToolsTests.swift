@@ -60,18 +60,25 @@ struct SafariToolsTests {
         }
     }
 
-    /// Running arbitrary JavaScript inside a logged-in browsing session is not a tool
-    /// this server is willing to offer, whatever the dictionary allows.
-    @Test("do JavaScript is not exposed as a tool")
-    func javaScriptIsNotExposed() {
-        let names = ToolCatalog.all().map { $0.name.lowercased() }
-        #expect(!names.contains { $0.contains("javascript") || $0.contains("script") })
+    /// `run_javascript` is offered, but never without the caller having to say so twice:
+    /// once in the extension's own settings, and once with `allowsJavaScript` on the
+    /// configuration this catalogue is built from.
+    @Test("run_javascript's description names the setting when it is off")
+    func javaScriptDescriptionReflectsConfiguration() {
+        let off = ToolCatalog.all(Configuration()).first { $0.name == ToolCatalog.runJavaScriptName }
+        #expect(off?.description?.contains("SWITCHED OFF") == true)
+
+        var configuration = Configuration()
+        configuration.allowsJavaScript = true
+        let on = ToolCatalog.all(configuration).first { $0.name == ToolCatalog.runJavaScriptName }
+        #expect(on?.description?.contains("SWITCHED OFF") == false)
     }
 
     @Test("Only the tools that change something are marked as writes")
     func annotationsAreHonest() {
         let writes = [
             ToolCatalog.openURLName, ToolCatalog.closeTabName, ToolCatalog.readingListAddName,
+            ToolCatalog.runJavaScriptName,
         ]
         for tool in ToolCatalog.all() {
             #expect(
@@ -192,6 +199,67 @@ struct SafariToolsTests {
         #expect(!isError)
         #expect(store.closedTabs.count == 1)
         #expect(store.closedTabs.first?.windowID == 101)
+    }
+
+    @Test("run_javascript fails while switched off, whatever the arguments")
+    func runJavaScriptRefusedWhenDisabled() async {
+        let store = FakeSafariStore()
+        let (text, isError) = await call(
+            ToolCatalog.runJavaScriptName,
+            ["id": .string(articleTabID), "script": .string("1+1"), "confirm": .bool(true)],
+            store: store, configuration: Configuration())
+        #expect(isError)
+        #expect(text.contains("Allow running JavaScript"))
+        #expect(store.scriptsRun.isEmpty)
+    }
+
+    @Test("run_javascript without confirm=true runs nothing")
+    func runJavaScriptRequiresConfirmation() async {
+        var configuration = Configuration()
+        configuration.allowsJavaScript = true
+        let store = FakeSafariStore()
+        let (text, isError) = await call(
+            ToolCatalog.runJavaScriptName,
+            ["id": .string(articleTabID), "script": .string("1+1")],
+            store: store, configuration: configuration)
+        #expect(isError)
+        #expect(store.scriptsRun.isEmpty)
+        #expect(text.contains("confirm"))
+    }
+
+    @Test("run_javascript with confirm=true runs the script in exactly the tab addressed")
+    func runJavaScriptRunsOne() async {
+        var configuration = Configuration()
+        configuration.allowsJavaScript = true
+        let store = FakeSafariStore()
+        store.scriptResults["document.title"] = "Tide tables for August"
+        let (text, isError) = await call(
+            ToolCatalog.runJavaScriptName,
+            [
+                "id": .string(articleTabID), "script": .string("document.title"),
+                "confirm": .bool(true),
+            ],
+            store: store, configuration: configuration)
+        #expect(!isError)
+        #expect(store.scriptsRun.count == 1)
+        #expect(store.scriptsRun.first?.id.windowID == 101)
+        #expect(store.scriptsRun.first?.script == "document.title")
+        #expect(text.contains("Tide tables for August"))
+    }
+
+    @Test("run_javascript refuses a tab id that no longer matches, before confirmation is even checked")
+    func runJavaScriptRefusesStaleTab() async {
+        var configuration = Configuration()
+        configuration.allowsJavaScript = true
+        let store = FakeSafariStore()
+        let staleID = TabID(windowID: 101, index: 1, url: "https://example.com/moved-on")
+        let (text, isError) = await call(
+            ToolCatalog.runJavaScriptName,
+            ["id": .string(staleID.encoded), "script": .string("1+1"), "confirm": .bool(true)],
+            store: store, configuration: configuration)
+        #expect(isError)
+        #expect(store.scriptsRun.isEmpty)
+        #expect(text.contains("tabs_list"))
     }
 
     @Test("reading_list_add passes the URL through")

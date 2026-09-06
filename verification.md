@@ -75,12 +75,30 @@ The binary to grant lives at
 
 Steps 5.2 and 5.3 are the point: a missing permission must not read as an empty browser.
 
-## 6 — What is deliberately absent
+## 6 — `run_javascript`, and what is still deliberately absent
+
+This is the one surface in this list this server has not exercised against a real Safari
+at all — everything above it, another agent could in principle have driven against the
+fake store, but *this* command running successfully, and the exact wording Safari uses to
+refuse it, can only be seen here. Do not skip it.
 
 | Step | Call | Expected |
 |---|---|---|
-| 6.1 | Search `tools/list` for anything JavaScript-related | Nothing. Safari's dictionary offers `do JavaScript`; this server does not. |
-| 6.2 | Look for a bookmark or history **write** tool | Nothing. Those files are read, never written. |
+| 6.1 | `run_javascript` with the setting off in Claude Desktop | Refused, naming "Allow running JavaScript". |
+| 6.2 | Turn that setting on, restart Claude Desktop, then `run_javascript` **before** enabling Safari's own Develop-menu setting | Refused. **Read the exact wording and compare it with `ToolError.javascriptRefused`'s message in `ToolError.swift` — file an issue or fix the wording if they do not obviously describe the same problem.** |
+| 6.3 | Safari → Settings → Advanced → turn on "Show features for web developers" → Develop menu → Allow JavaScript from Apple Events | |
+| 6.4 | `run_javascript` on the article tab **without** `confirm` | Refused. Nothing ran. |
+| 6.5 | `run_javascript` with `confirm: true` and `script: "document.title"` | Succeeds; the result matches the tab's actual title. |
+| 6.6 | `run_javascript` with `script: "1 + 1"` | Result is `2`, not `"2"` — confirms numbers are not being stringified twice. |
+| 6.7 | `run_javascript` with `script: "({a: 1, b: [2, 3]})"` | Result is rendered as JSON: `{"a":1,"b":[2,3]}`. |
+| 6.8 | `run_javascript` with `script: "undefined"` | Result reads `(no value)`. |
+| 6.9 | `run_javascript` against the tab in the **second** window | Runs there, not in the frontmost window — confirms the id, not "the active tab", decides where it runs. |
+| 6.10 | Look for a bookmark or history **write** tool | Nothing. Those files are read, never written. |
+
+Step 6.2 is the one that matters most: this server's own message for that refusal was
+written without ever having seen Safari's real one, exactly because no agent may cause
+this state on the owner's machine. If they disagree, `ToolError.javascriptRefused`'s
+message and the "NEEDS VERIFICATION" comment in `SafariBridge.m` are what to fix.
 
 ## 7 — Packaging
 
@@ -89,11 +107,13 @@ Steps 5.2 and 5.3 are the point: a missing permission must not read as an empty 
 | 7.1 | `otool -P .build/release/apple-safari-mcp \| grep NSAppleEventsUsageDescription` | Present. |
 | 7.2 | `MCPB_SIGN_IDENTITY="Apple Development: …" bash scripts/pack.sh` | Every check passes; the designated-requirement line is not empty. |
 | 7.3 | `codesign -dv extension/server/apple-safari-mcp` | `flags=0x0(none)` — never `linker-signed`. |
-| 7.4 | Install, restart Claude Desktop | Nine switches appear, one per tool. |
+| 7.4 | Install, restart Claude Desktop | Ten switches appear, one per tool, plus the "Allow running JavaScript" setting. |
 
 ## 8 — Afterwards
 
 Decide deliberately which tools to leave on. `tab_get_text` reads whatever you have open,
 including pages behind a login — that is what makes it useful and what makes it worth
 thinking about. `tab_get_source`, `bookmarks_list` and `history_search` are reasonable ones
-to leave switched off until you want them.
+to leave switched off until you want them. `run_javascript` most of all: it is the one tool
+here that can act inside a signed-in session rather than only read or navigate one, and it
+carries no restriction on which tab once it is on.
