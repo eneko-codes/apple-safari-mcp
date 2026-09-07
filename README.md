@@ -35,6 +35,22 @@ Not affiliated with or endorsed by Apple Inc.
 | `history_search` | read | Visited pages, matched by URL/title text and a date range, newest first. Needs Full Disk Access. |
 | `run_javascript` | **destructive** | Runs JavaScript in a tab already open, in whatever session it holds. Requires `confirm: true`. **Off by default** — see [Tool switches](#tool-switches). |
 
+## Frameworks and APIs
+
+Safari exposes no framework for its tabs, so those go through Apple events. Bookmarks and
+history are files, read directly.
+
+| Used | For | Reference |
+|---|---|---|
+| ScriptingBridge — `SBApplication`, `SBElementArray` | Tabs, windows, page text and source, `close_tab`, `open_url`, Reading List, `run_javascript` | [ScriptingBridge](https://developer.apple.com/documentation/scriptingbridge) |
+| `AEDeterminePermissionToAutomateTarget` | Checking Automation consent without sending an event | [Apple Events](https://developer.apple.com/documentation/coreservices/apple_events) |
+| `PropertyListSerialization` | `~/Library/Safari/Bookmarks.plist` | [PropertyListSerialization](https://developer.apple.com/documentation/foundation/propertylistserialization) |
+| SQLite C API, read-only | `~/Library/Safari/History.db`, opened `mode=ro` **without** `immutable=1`, so a read sees what the write-ahead log still holds | [SQLite C API](https://www.sqlite.org/c3ref/intro.html) |
+| `NSAppleEventsUsageDescription` | The consent string macOS shows | [Information Property List](https://developer.apple.com/documentation/bundleresources/information-property-list/nsappleeventsusagedescription) |
+
+Safari's dictionary offers `email contents`, which is deliberately not declared. Reading
+List can be added to but not read back — the dictionary has no command for it.
+
 ## The rules worth knowing before you use it
 
 **A tab id names a position, not a page.** Safari gives a tab no identifier of its own —
@@ -213,10 +229,10 @@ section.
 
 - **`tab_get_source` cannot currently be enabled through the packaged `.mcpb`.** It is
   gated by an internal `allowsPageSource` flag, off by default, that only a
-  `--allow-page-source true` command-line argument can flip — and `extension/manifest.json`
-  declares no `user_config` that would let Claude Desktop pass one. The Claude Desktop
+  `--allow-page-source true` command-line argument can flip. The manifest's only `user_config`
+  is `allow_javascript`, and `mcp_config.args` passes just that, so nothing can set this one. The Claude Desktop
   per-tool switch controls whether the tool can be *called* at all, which is a separate
-  gate from this one; with no `user_config` wired up, the tool fails with "switched off"
+  gate from this one; with no argument wired up, the tool fails with "switched off"
   regardless of that switch. Enabling it means registering the binary manually with
   `"args": ["--allow-page-source", "true"]`.
 - **The Reading List cannot be read back.** Safari's scripting dictionary has no command
@@ -244,7 +260,7 @@ swift build
 swift test
 ```
 
-21 tests in one suite, all against an in-memory fake (`FakeSafariStore`) with Safari
+24 tests in one suite, all against an in-memory fake (`FakeSafariStore`) with Safari
 closed and no permission granted — see `CLAUDE.md`, whose hard rule is that this server
 must never read the owner's real open tabs or disturb their Safari session.
 
