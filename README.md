@@ -230,8 +230,7 @@ section.
 - **The exact wording `run_javascript` reports when "Allow JavaScript from Apple Events"
   is off is unverified.** The bridge detects the refusal and surfaces whatever
   `SBApplication`'s `lastError` says, but the precise message has not been checked
-  against a live Safari with that setting off — see `verification.md`. This is
-  deliberate, not an oversight: the codebase must never touch the owner's own Safari
+  against a live Safari with that setting off. This is deliberate, not an oversight: the codebase must never touch the owner's own Safari
   during development.
 - **Safari must already be running.** This server will not launch it — starting a browser
   is a visible side effect nobody asked for.
@@ -250,7 +249,7 @@ closed and no permission granted — see `CLAUDE.md`, whose hard rule is that th
 must never read the owner's real open tabs or disturb their Safari session.
 
 Manual verification against a live Safari, and against real bookmarks and history, is the
-owner's job; `verification.md` is the script for it.
+owner's job.
 
 ## Licence
 
