@@ -97,7 +97,7 @@ a missing permission. `safari_status` reports the two permissions separately.
 MCPB_SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" ./scripts/pack.sh
 ```
 
-That builds a universal (arm64 + x86_64) release binary, re-signs it (the linker's own
+That builds an arm64 (Apple silicon only) release binary, re-signs it (the linker's own
 signature is `linker-signed`, which TCC treats as signed by nobody), checks the embedded
 `Info.plist` survived both linking and signing, prints the designated requirement, and
 writes `dist/apple-safari-mcp.mcpb`. It fails loudly rather than shipping a bundle that
