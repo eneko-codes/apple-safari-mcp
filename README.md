@@ -260,7 +260,7 @@ swift build
 swift test
 ```
 
-24 tests in one suite, all against an in-memory fake (`FakeSafariStore`) with Safari
+The tests run entirely against an in-memory fake (`FakeSafariStore`) with Safari
 closed and no permission granted — see `CLAUDE.md`, whose hard rule is that this server
 must never read the owner's real open tabs or disturb their Safari session.
 
