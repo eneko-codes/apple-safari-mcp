@@ -159,6 +159,11 @@ Safari → Settings → Advanced → turn on "Show features for web developers"
 Without it, `run_javascript` fails and names this exact setting. Everything else works
 without it — this is the one tool that needs it.
 
+**"Allow remote automation and external agents" is not needed.** That checkbox, in the
+same Developer settings, gates `safaridriver`: WebDriver testing and Safari's own MCP
+server (`safaridriver --mcp`). This server uses Apple events instead, so leave it off
+unless you want Apple's server for something else.
+
 ### Signing, and why it is not optional
 
 `swift build` leaves a signature the linker generated, flagged `linker-signed`. macOS
