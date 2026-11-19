@@ -55,7 +55,14 @@ public struct Arguments {
         guard let raw = optionalString(name) else { return nil }
 
         let parts = raw.split(separator: "T", omittingEmptySubsequences: false)
-        if parts.count == 1 || (parts.count == 2 && !raw.contains("Z") && !raw.contains("+")) {
+        // An offset is a `+` or `-` after the time, or a trailing Z. Checking only for `+`
+        // and `Z` sent `…T09:00:00-05:00` down the local-time path, which read the hour and
+        // minute and dropped the offset without a word — a result five hours wrong.
+        let hasOffset =
+            parts.count == 2
+            && (parts[1].contains("+") || parts[1].contains("-")
+                || parts[1].uppercased().hasSuffix("Z"))
+        if parts.count == 1 || (parts.count == 2 && !hasOffset) {
             let dayParts = parts[0].split(separator: "-")
             guard dayParts.count == 3, let year = Int(dayParts[0]), let month = Int(dayParts[1]),
                 let day = Int(dayParts[2]), (1...12).contains(month), (1...31).contains(day)

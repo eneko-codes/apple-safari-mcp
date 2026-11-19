@@ -46,6 +46,8 @@ otool -P .build/release/apple-safari-mcp | grep NSAppleEventsUsageDescription
 holds any other architecture. A universal build doubles the bundle for an architecture
 macOS 26 is the last release to support. Do not add an x86_64 slice back.
 
+**Own stdio transport, deliberately.** `BlockingStdioTransport` reads stdin with a blocking `read(2)` on one thread. The SDK's `StdioTransport` (0.12.1, the newest tag) sets stdin non-blocking and sleeps 10 ms between empty reads, which keeps an idle server waking a hundred times a second. Do not switch back to it; `BlockingStdioTransportTests` counts reads over a silent interval to catch that.
+
 ## Diagnostics
 
 Logs go to stderr through `Diagnostics`, which the host captures (Claude Desktop writes it to `~/Library/Logs/Claude/mcp-server-<name>.log`). stdout is the JSON-RPC stream: never `print`. The API takes no free-form text on purpose. Do not add one, and do not log an argument, a result, an error's `localizedDescription` or an identifier; log a fixed event, the tool name, the error's kind and a duration.

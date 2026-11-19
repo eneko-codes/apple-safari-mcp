@@ -300,6 +300,31 @@ struct SafariToolsTests {
         #expect(store.historyQueries.first?.from != nil)
     }
 
+    @Test("An explicit offset, positive or negative, moves the instant it names")
+    func historyHonoursExplicitOffsets() async throws {
+        let instant = try #require(ISO8601DateFormatter().date(from: "2026-08-12T14:00:00Z"))
+        let spellings = [
+            "2026-08-12T14:00:00Z", "2026-08-12T16:00:00+02:00", "2026-08-12T09:00:00-05:00",
+        ]
+        for spelling in spellings {
+            let store = FakeSafariStore()
+            let (_, isError) = await call(
+                ToolCatalog.historySearchName, ["from": .string(spelling)], store: store)
+            #expect(!isError, "\(spelling)")
+            #expect(store.historyQueries.first?.from == instant, "\(spelling)")
+        }
+    }
+
+    @Test("A negative offset without seconds is refused, never read as local time")
+    func historyRefusesAmbiguousOffset() async {
+        let store = FakeSafariStore()
+        let (_, isError) = await call(
+            ToolCatalog.historySearchName, ["from": .string("2026-08-12T09:00-05:00")],
+            store: store)
+        #expect(isError)
+        #expect(store.historyQueries.isEmpty)
+    }
+
     // MARK: Failure
 
     @Test("An unknown tool name is refused")
