@@ -4,7 +4,7 @@ import MCP
 public enum SafariMCPServer {
 
     public static let name = "apple-safari-mcp"
-    public static let version = "1.1.1"
+    public static let version = "1.1.2"
 
     /// Returned from `initialize`. It carries what per-tool descriptions cannot state
     /// once: the id workflow, the two unrelated permissions, and what reading a tab
@@ -51,7 +51,8 @@ public enum SafariMCPServer {
     /// in this function contacts Safari by itself.
     public static func run(
         store: any SafariStore = BridgeSafariStore(),
-        configuration: Configuration = Configuration()
+        configuration: Configuration = Configuration(),
+        transport: any Transport = BlockingStdioTransport()
     ) async throws {
         let tools = SafariTools(store: store, configuration: configuration)
         let server = Server(
@@ -64,11 +65,11 @@ public enum SafariMCPServer {
         await server.withMethodHandler(ListTools.self) { _ in .init(tools: ToolCatalog.all(configuration)) }
         await server.withMethodHandler(CallTool.self) { await tools.handle($0) }
 
-        // The default StdioTransport logger is a no-op handler. Leave it that way: a
-        // logger writing to stdout would interleave with the JSON-RPC stream and break
-        // every response after the first log line.
+        // The transport's logger is a no-op handler. Leave it that way: a logger writing
+        // to stdout would interleave with the JSON-RPC stream and break every response
+        // after the first log line.
         Diagnostics.started(version: version)
-        try await server.start(transport: StdioTransport())
+        try await server.start(transport: transport)
         await server.waitUntilCompleted()
     }
 }
