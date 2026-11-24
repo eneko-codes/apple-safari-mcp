@@ -1,10 +1,9 @@
 import Foundation
-import MCP
 
 public enum SafariMCPServer {
 
     public static let name = "apple-safari-mcp"
-    public static let version = "1.1.2"
+    public static let version = "1.1.3"
 
     /// Returned from `initialize`. It carries what per-tool descriptions cannot state
     /// once: the id workflow, the two unrelated permissions, and what reading a tab
@@ -51,25 +50,18 @@ public enum SafariMCPServer {
     /// in this function contacts Safari by itself.
     public static func run(
         store: any SafariStore = BridgeSafariStore(),
-        configuration: Configuration = Configuration(),
-        transport: any Transport = BlockingStdioTransport()
-    ) async throws {
-        let tools = SafariTools(store: store, configuration: configuration)
-        let server = Server(
-            name: name,
-            version: version,
-            instructions: instructions,
-            capabilities: .init(tools: .init(listChanged: false))
-        )
-
-        await server.withMethodHandler(ListTools.self) { _ in .init(tools: ToolCatalog.all(configuration)) }
-        await server.withMethodHandler(CallTool.self) { await tools.handle($0) }
-
-        // The transport's logger is a no-op handler. Leave it that way: a logger writing
-        // to stdout would interleave with the JSON-RPC stream and break every response
-        // after the first log line.
+        configuration: Configuration = Configuration()
+    ) async {
         Diagnostics.started(version: version)
-        try await server.start(transport: transport)
-        await server.waitUntilCompleted()
+        await serveStandardStreams(
+            handler: handler(
+                tools: SafariTools(store: store, configuration: configuration),
+                configuration: configuration))
+    }
+
+    public static func handler(tools: SafariTools, configuration: Configuration) -> MCPHandler {
+        MCPHandler(
+            name: name, version: version, instructions: instructions,
+            catalog: ToolCatalog.all(configuration), tools: tools)
     }
 }

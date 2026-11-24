@@ -14,7 +14,9 @@ Reading a real tab is reading the owner's screen, and `close_tab` and `run_javas
 
 ## What this is
 
-A local MCP server (Swift 6, stdio transport) exposing Safari through Apple events, plus two tools that read Safari's own files (bookmarks, history). No network of its own. Safari must already be running; this server never launches it.
+A local MCP server (Swift 6, stdio transport) exposing Safari through Apple events, plus two tools that read Safari's own files (bookmarks, history). No network of its own. Safari must already be running; this server never launches it. **No third-party dependency**: `Package.swift` lists none, and the MCP protocol (JSON-RPC over stdio) is `MCPServer.swift` over Foundation. Adding a package needs the owner's say-so.
+
+**`MCPServer.swift`, `Value.swift` and `Tests/…/MCPProtocolTests.swift` are copied unchanged into every one of the owner's MCP servers** (the test file differs only in its `@testable import`). A change to one is made to every copy in the same piece of work; never let a copy drift.
 
 ## Apple technology
 
@@ -46,7 +48,7 @@ otool -P .build/release/apple-safari-mcp | grep NSAppleEventsUsageDescription
 holds any other architecture. A universal build doubles the bundle for an architecture
 macOS 26 is the last release to support. Do not add an x86_64 slice back.
 
-**Own stdio transport, deliberately.** `BlockingStdioTransport` reads stdin with a blocking `read(2)` on one thread. The SDK's `StdioTransport` (0.12.1, the newest tag) sets stdin non-blocking and sleeps 10 ms between empty reads, which keeps an idle server waking a hundred times a second. Do not switch back to it; `BlockingStdioTransportTests` counts reads over a silent interval to catch that.
+**An idle server must not poll stdin.** The MCP Swift SDK's `StdioTransport` (0.12.1) set stdin non-blocking and slept 10 ms between empty reads, which kept an idle server waking a hundred times a second; that is why this server once carried its own transport. The shared `serveStandardStreams` reads through `FileHandle.bytes.lines`, which leaves stdin blocking and does not wake while it is silent. `StandardStreamsTests` starts the built server with stdin open and counts its wakeups over an idle second to catch a regression.
 
 ## Diagnostics
 
