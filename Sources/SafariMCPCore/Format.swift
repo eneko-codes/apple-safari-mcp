@@ -30,6 +30,35 @@ public struct Format: Sendable {
         }.joined(separator: "\n")
     }
 
+    static func plural(_ count: Int, _ noun: String) -> String {
+        "\(count) \(noun)\(count == 1 ? "" : "s")"
+    }
+
+    /// `text` cut to `width` characters, with whether that cut anything.
+    static func clip(_ text: String, to width: Int) -> (text: String, wasClipped: Bool) {
+        text.count > width ? (String(text.prefix(width)) + "…", true) : (text, false)
+    }
+
+    /// One page of a listing: the notices, the sentence that places the page in the whole,
+    /// and what `render` makes of the rows. `rows` is the page as the source gave it, at
+    /// most `limit` of them, starting `offset` rows in. A page whose text is too long is
+    /// halved until it fits, and its notice then says where to resume.
+    ///
+    /// `render` also returns the notices that depend on what it rendered, such as a field
+    /// it clipped, so that such a notice is added only when a row on the page needed it.
+    static func page<Row>(
+        _ rows: [Row], offset: Int, total: Int, limit: Int, things: String, notices: [String],
+        render: ([Row]) -> (body: String, notices: [String])
+    ) -> String {
+        ToolStandard.fitting(limit) { size in
+            let shown = Array(rows.prefix(size))
+            let rendered = render(shown)
+            let position = Notice.page(offset: offset, count: shown.count, total: total, things: things)
+            return ToolStandard.withNotices(
+                notices + [position].compactMap { $0 } + rendered.notices, rendered.body)
+        }
+    }
+
     /// Collapses a multi-line value onto one line, so the one-line-per-result contract
     /// that makes a listing scannable survives a page title with a newline in it.
     static func oneLine(_ text: String) -> String {
@@ -96,8 +125,7 @@ public struct Format: Sendable {
                 "run javascript",
                 configuration.allowsJavaScript ? "allowed, in any tab" : "off"
             ),
-            ("page limit", "\(Configuration.pageCharacterLimit) characters"),
-            ("default results", "\(Configuration.searchLimit)"),
+            ("time limit", "\(ToolCatalog.callDeadline.components.seconds) seconds per call"),
         ])
 
         if state != .ready {
@@ -119,100 +147,188 @@ public struct Format: Sendable {
 
     // MARK: Tabs
 
-    public func windowList(_ windows: [WindowInfo]) -> String {
-        guard !windows.isEmpty else {
-            return """
-                Safari has no open windows.
+    /// One tab of the listing, with the window it sits in.
+    public struct TabRow: Sendable, Equatable {
+        public let windowID: Int
+        public let windowTitle: String
+        public let tab: TabSummary
 
-                It is running, but nothing is open to read. This server will not open a
-                window on its own account; open_url will, if that is what was wanted.
-                """
+        public init(windowID: Int, windowTitle: String, tab: TabSummary) {
+            self.windowID = windowID
+            self.windowTitle = windowTitle
+            self.tab = tab
         }
+    }
 
-        let tabCount = windows.reduce(0) { $0 + $1.tabs.count }
-        var lines = ["\(tabCount) tab\(tabCount == 1 ? "" : "s") in \(windows.count) window\(windows.count == 1 ? "" : "s")."]
-        for window in windows {
-            lines.append("")
-            lines.append("Window \(window.id) · \(Self.oneLine(window.title))")
-            for tab in window.tabs {
-                lines.append("  \(tab.isCurrent ? "▸" : " ") \(Self.oneLine(tab.title))")
-                lines.append("    \(tab.url)")
-                lines.append("    id: \(tab.id.encoded)")
+    /// The order a page of tabs is given in: by window id, then by position from the left.
+    /// No two tabs tie, because a position is unique inside a window.
+    public static func tabRows(_ windows: [WindowInfo]) -> [TabRow] {
+        windows.flatMap { window in
+            window.tabs.map { TabRow(windowID: window.id, windowTitle: window.title, tab: $0) }
+        }.sorted { ($0.windowID, $0.tab.id.index) < ($1.windowID, $1.tab.id.index) }
+    }
+
+    public func tabList(
+        _ rows: [TabRow], offset: Int, total: Int, windows: Int, limit: Int, notices: [String]
+    ) -> String {
+        Self.page(
+            rows, offset: offset, total: total, limit: limit, things: "tabs", notices: notices
+        ) { rows in
+            var titleClipped = false
+            var urlClipped = false
+            func fitTitle(_ text: String) -> String {
+                let result = Self.clip(Self.oneLine(text), to: ToolCatalog.titleWidth)
+                titleClipped = titleClipped || result.wasClipped
+                return result.text
             }
-        }
-        lines.append("")
-        lines.append(
-            """
-            A tab id names a position in a window, so it stops being valid the moment tabs \
-            are closed or reordered. Read or close a tab soon after listing, and list again \
-            if a call says the id has moved.
-            """)
-        return lines.joined(separator: "\n")
-    }
+            func fitURL(_ text: String) -> String {
+                let result = Self.clip(text, to: ToolCatalog.urlWidth)
+                urlClipped = urlClipped || result.wasClipped
+                return result.text
+            }
+            guard total > 0 else {
+                return (
+                    """
+                    Safari has no open windows.
 
-    public func tabContent(_ tab: TabContent) -> String {
-        var text = Self.block([
-            ("title", Self.oneLine(tab.title)),
-            ("url", tab.url),
-            ("kind", tab.kind == .text ? "rendered page text" : "raw HTML source"),
-            (
-                "length",
-                tab.truncated
-                    ? "\(tab.content.count) of \(tab.totalCharacters) characters (TRUNCATED)"
-                    : "\(tab.totalCharacters) characters"
-            ),
-        ])
-        text += "\n\n" + tab.content
-        if tab.truncated {
-            text += """
-
-
-                — cut at \(tab.content.count) characters. This is the beginning of the page, \
-                not all of it.
+                    It is running, but nothing is open to read. This server will not open a \
+                    window on its own account; open_url will, if that is what was wanted.
+                    """, []
+                )
+            }
+            var lines = [
+                "\(Self.plural(total, "tab")) in \(Self.plural(windows, "window")), ordered by window id, then by position from the left."
+            ]
+            if rows.isEmpty { lines += ["", "(nothing at this offset)"] }
+            var currentWindow: Int?
+            for row in rows {
+                if row.windowID != currentWindow {
+                    currentWindow = row.windowID
+                    lines.append("")
+                    lines.append("Window \(row.windowID) · \(fitTitle(row.windowTitle))")
+                }
+                lines.append("  \(row.tab.isCurrent ? "▸" : " ") \(fitTitle(row.tab.title))")
+                lines.append("    \(fitURL(row.tab.url))")
+                lines.append("    id: \(row.tab.id.encoded)")
+            }
+            lines.append("")
+            lines.append(
                 """
+                A tab id names a position in a window, so it stops being valid the moment tabs \
+                are closed or reordered. Read or close a tab soon after listing, and list again \
+                if a call says the id has moved.
+                """)
+            var note: [String] = []
+            if titleClipped {
+                note.append(
+                    Notice.clipped(field: "Title", width: ToolCatalog.titleWidth, tool: ToolCatalog.tabTextName))
+            }
+            if urlClipped {
+                note.append(
+                    Notice.clipped(field: "URL", width: ToolCatalog.urlWidth, tool: ToolCatalog.tabTextName))
+            }
+            return (lines.joined(separator: "\n"), note)
         }
-        return text
     }
 
-    public func opened(_ tab: OpenedTab) -> String {
-        """
-        Opened in a new tab.
+    /// One window of a tab's text, with the title and URL in full.
+    public func tabContent(_ tab: TabContent, characterOffset: Int, maxCharacters: Int, notices: [String])
+        -> String
+    {
+        let total = tab.content.count
+        return ToolStandard.fitting(maxCharacters) { size in
+            let window = ToolStandard.window(
+                of: tab.content, characterOffset: characterOffset, maxCharacters: size)
+            let header = Self.block([
+                ("title", Self.oneLine(tab.title)),
+                ("url", tab.url),
+                ("kind", tab.kind == .text ? "rendered page text" : "raw HTML source"),
+                ("length", "\(total) characters"),
+            ])
+            return ToolStandard.withNotices(
+                notices + [window.notice].compactMap { $0 }, header + "\n\n" + window.text)
+        }
+    }
 
-        \(Self.block([
-            ("url", tab.url),
-            ("title", tab.title.isEmpty ? "(still loading)" : Self.oneLine(tab.title)),
-            ("id", tab.id.encoded),
-        ]))
+    public func opened(_ tab: OpenedTab, notices: [String] = []) -> String {
+        var notes = notices
+        let title = Self.clip(Self.oneLine(tab.title), to: ToolCatalog.titleWidth)
+        let url = Self.clip(tab.url, to: ToolCatalog.urlWidth)
+        if title.wasClipped {
+            notes.append(
+                Notice.clipped(field: "Title", width: ToolCatalog.titleWidth, tool: ToolCatalog.tabTextName))
+        }
+        if url.wasClipped {
+            notes.append(
+                Notice.clipped(field: "URL", width: ToolCatalog.urlWidth, tool: ToolCatalog.tabTextName))
+        }
+        return ToolStandard.withNotices(
+            notes,
+            """
+            Opened in a new tab.
 
-        The page may still be loading. A title of "(still loading)" is normal straight \
-        after opening; call tabs_list again in a moment.
-        """
+            \(Self.block([
+                ("url", url.text),
+                ("title", tab.title.isEmpty ? "(still loading)" : title.text),
+                ("id", tab.id.encoded),
+            ]))
+
+            The page may still be loading. A title of "(still loading)" is normal straight \
+            after opening; call tabs_list again in a moment.
+            """)
     }
 
     public func closed(_ tab: TabSummary) -> String {
-        """
-        Closed the tab. This cannot be undone from here.
+        // What was closed cannot be read again, so a cut field says so in the one sentence
+        // the standard has for output that cannot be asked for twice.
+        var notes: [String] = []
+        func fit(_ text: String, _ width: Int) -> String {
+            let result = Self.clip(text, to: width)
+            if result.wasClipped {
+                notes.append("Cut at \(width) of \(text.count) characters; the rest cannot be read again.")
+            }
+            return result.text
+        }
+        let title = fit(Self.oneLine(tab.title), ToolCatalog.titleWidth)
+        let url = fit(tab.url, ToolCatalog.urlWidth)
+        return ToolStandard.withNotices(
+            notes,
+            """
+            Closed the tab. This cannot be undone from here.
 
-        \(Self.block([
-            ("title", Self.oneLine(tab.title)),
-            ("url", tab.url),
-        ]))
+            \(Self.block([
+                ("title", title),
+                ("url", url),
+            ]))
 
-        Reopening it is a menu gesture — History → Reopen Last Closed Tab — that only the \
-        person at the keyboard can make, and any text typed into the page is gone.
-        """
+            Reopening it is a menu gesture — History → Reopen Last Closed Tab — that only the \
+            person at the keyboard can make, and any text typed into the page is gone.
+            """)
     }
 
-    public func javascriptResult(_ result: JavaScriptResult) -> String {
-        """
-        Ran the script.
+    /// The script's result, cut at `maxCharacters`. The script cannot be run a second time
+    /// to read the rest, because it may have changed the page, so there is no offset: the
+    /// sentence for output that cannot be asked for twice says so.
+    public func javascriptResult(_ result: JavaScriptResult, maxCharacters: Int, notices: [String])
+        -> String
+    {
+        ToolStandard.fitting(maxCharacters) { size in
+            let total = result.result.count
+            let cut = total > size
+            let shown = cut ? String(result.result.prefix(size)) : result.result
+            let note = cut ? ["Cut at \(size) of \(total) characters; the rest cannot be read again."] : []
+            return ToolStandard.withNotices(
+                notices + note,
+                """
+                Ran the script.
 
-        \(Self.block([
-            ("tab", result.id.encoded),
-        ]))
+                \(Self.block([
+                    ("tab", result.id.encoded)
+                ]))
 
-        Result: \(result.result)
-        """
+                Result: \(shown)
+                """)
+        }
     }
 
     public func readingListAdded(url: String, title: String?) -> String {
@@ -220,8 +336,8 @@ public struct Format: Sendable {
         Added to the Reading List.
 
         \(Self.block([
-            ("url", url),
-            ("title", title.map(Self.oneLine)),
+            ("url", ToolStandard.echo(url)),
+            ("title", title.map { ToolStandard.echo(Self.oneLine($0)) }),
         ]))
 
         Safari's scripting dictionary cannot read the Reading List back, so this server \
@@ -232,73 +348,80 @@ public struct Format: Sendable {
 
     // MARK: Library
 
-    public func bookmarkList(_ bookmarks: [Bookmark], folder: String?, total: Int) -> String {
-        guard !bookmarks.isEmpty else {
-            return folder.map {
-                """
-                No bookmarks under a folder matching '\($0)'.
+    public func bookmarkList(
+        _ bookmarks: [Bookmark], offset: Int, total: Int, limit: Int, folder: String?,
+        notices: [String]
+    ) -> String {
+        Self.page(
+            bookmarks, offset: offset, total: total, limit: limit, things: "bookmarks",
+            notices: notices
+        ) { bookmarks in
+            guard total > 0 else {
+                return (
+                    folder.map {
+                        """
+                        No bookmarks under a folder matching '\(ToolStandard.echo($0))'.
 
-                Folder matching is a case-insensitive prefix of the path, as shown in the \
-                'folder' column. Call bookmarks_list without a folder to see the paths \
-                that exist.
-                """
-            } ?? "Safari has no bookmarks."
+                        Folder matching is a case-insensitive prefix of the path, as shown in the \
+                        'folder' column. Call bookmarks_list without a folder to see the paths \
+                        that exist.
+                        """
+                    } ?? "Safari has no bookmarks.", []
+                )
+            }
+            var lines = [
+                "\(Self.plural(total, "bookmark")), in the order of Safari's bookmark tree."
+            ]
+            if let folder { lines.append("Folder filter: \(ToolStandard.echo(folder))") }
+            if bookmarks.isEmpty { lines += ["", "(nothing at this offset)"] }
+            for bookmark in bookmarks {
+                lines.append("")
+                lines.append("  \(Self.oneLine(bookmark.title))")
+                lines.append("    \(bookmark.url)")
+                if !bookmark.folderPath.isEmpty { lines.append("    folder: \(bookmark.folderPath)") }
+            }
+            return (lines.joined(separator: "\n"), [])
         }
-
-        var lines: [String] = []
-        lines.append(
-            bookmarks.count == total
-                ? "\(total) bookmark\(total == 1 ? "" : "s")."
-                : "\(bookmarks.count) of \(total) bookmarks (limited).")
-        if let folder { lines.append("Folder filter: \(folder)") }
-        for bookmark in bookmarks {
-            lines.append("")
-            lines.append("  \(Self.oneLine(bookmark.title))")
-            lines.append("    \(bookmark.url)")
-            if !bookmark.folderPath.isEmpty { lines.append("    folder: \(bookmark.folderPath)") }
-        }
-        return lines.joined(separator: "\n")
     }
 
     public func historyResults(
-        _ page: HistoryPage, query: String?, from: Date?, to: Date?
+        _ page: HistoryPage, offset: Int, limit: Int, query: String?, fromDate: Date?,
+        toDate: Date?, notices: [String]
     ) -> String {
-        var header = Self.block([
-            ("query", query ?? "(everything in range)"),
-            ("from", from.map(day) ?? "(no lower bound)"),
-            ("to", to.map(day) ?? "(no upper bound)"),
-            ("matches", "\(page.results.count)\(page.truncated ? " (limit reached)" : "")"),
+        let header = Self.block([
+            ("query", query.map(ToolStandard.echo) ?? "(everything in range)"),
+            ("from_date", fromDate.map(day) ?? "(no lower bound)"),
+            ("to_date", toDate.map(day) ?? "(no upper bound)"),
+            ("matches", "\(page.total), newest visit first"),
         ])
+        return Self.page(
+            page.results, offset: offset, total: page.total, limit: limit, things: "visits",
+            notices: notices
+        ) { results in
+            guard page.total > 0 else {
+                return (
+                    header + """
 
-        guard !page.results.isEmpty else {
-            return header + """
 
+                        Nothing in Safari's history matches.
 
-                Nothing in Safari's history matches.
-
-                History search looks at the URL and the page title, nothing else — the \
-                text of a page is not stored. Widen the date range, or drop the query \
-                entirely to see what is there.
-                """
-        }
-
-        var lines = [header]
-        for entry in page.results {
-            lines.append("")
-            lines.append("  \(timestamp(entry.visitedAt)) · \(Self.oneLine(entry.title))")
-            lines.append("    \(entry.url)")
-            if entry.visitCount > 1 {
-                lines.append("    visits: \(entry.visitCount) in total")
+                        History search looks at the URL and the page title, nothing else — the \
+                        text of a page is not stored. Widen the date range, or drop the query \
+                        entirely to see what is there.
+                        """, []
+                )
             }
+            var lines = [header]
+            if results.isEmpty { lines += ["", "(nothing at this offset)"] }
+            for entry in results {
+                lines.append("")
+                lines.append("  \(timestamp(entry.visitedAt)) · \(Self.oneLine(entry.title))")
+                lines.append("    \(entry.url)")
+                if entry.visitCount > 1 {
+                    lines.append("    visits: \(entry.visitCount) in total")
+                }
+            }
+            return (lines.joined(separator: "\n"), [])
         }
-        if page.truncated {
-            lines.append("")
-            lines.append(
-                """
-                Stopped at the limit; there are older matches behind these. Narrow the \
-                range or raise 'limit'.
-                """)
-        }
-        return lines.joined(separator: "\n")
     }
 }

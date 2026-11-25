@@ -120,24 +120,16 @@ public struct TabContent: Sendable, Equatable {
     public let title: String
     public let url: String
     public let kind: TabContentKind
+    /// The whole of it. The tool layer cuts the window a call asked for, so that a second
+    /// call can start exactly where the first ended.
     public let content: String
-    /// True when `content` was cut to the configured limit, so the reader is never left
-    /// to assume a truncated page is the whole thing.
-    public let truncated: Bool
-    /// Length before truncation, in characters.
-    public let totalCharacters: Int
 
-    public init(
-        id: TabID, title: String, url: String, kind: TabContentKind, content: String,
-        truncated: Bool, totalCharacters: Int
-    ) {
+    public init(id: TabID, title: String, url: String, kind: TabContentKind, content: String) {
         self.id = id
         self.title = title
         self.url = url
         self.kind = kind
         self.content = content
-        self.truncated = truncated
-        self.totalCharacters = totalCharacters
     }
 }
 
@@ -172,13 +164,14 @@ public struct HistoryEntry: Sendable, Equatable {
 }
 
 public struct HistoryPage: Sendable, Equatable {
+    /// The visits of one page, newest first.
     public let results: [HistoryEntry]
-    /// True when the query stopped at the limit and there were more rows behind it.
-    public let truncated: Bool
+    /// How many visits match in all, whatever the page holds.
+    public let total: Int
 
-    public init(results: [HistoryEntry], truncated: Bool) {
+    public init(results: [HistoryEntry], total: Int) {
         self.results = results
-        self.truncated = truncated
+        self.total = total
     }
 }
 

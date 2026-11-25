@@ -27,27 +27,6 @@ public struct Configuration: Sendable, Equatable {
 
     public init() {}
 
-    /// Ceiling on how much of one page crosses the boundary, in characters. A long
-    /// article runs to tens of thousands; a web application can run to millions.
-    ///
-    /// Fixed rather than a `user_config` setting: the manifest's own default was the only
-    /// value this ever ran with in practice, so the setting bought configurability nobody
-    /// used. Raising it is a code change, not a Claude Desktop one.
-    public static let pageCharacterLimit = 40_000
-
-    /// Default page size for `history_search` and `bookmarks_list`. The tool's own
-    /// `limit` still wins.
-    ///
-    /// Fixed for the same reason as `pageCharacterLimit` — this is the manifest's former
-    /// default, now the only value.
-    public static let searchLimit = 50
-
-    public static let searchLimitRange = 1...500
-
-    /// Paging ceiling. Declared here so the advertised schema and the enforced clamp
-    /// cannot drift: both read this one value.
-    public static let offsetRange = 0...10_000
-
     /// True when an argument is an unsubstituted manifest placeholder.
     ///
     /// Claude Desktop leaves `${user_config.key}` untouched when the person left that

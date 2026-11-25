@@ -115,7 +115,9 @@ enum SafariLibrary {
     /// Filtered in SQL rather than above the seam because a history database holds
     /// hundreds of thousands of rows — the one place in this server where the filter has
     /// to travel with the query.
-    static func history(query: String?, from: Date?, to: Date?, limit: Int) throws -> HistoryPage {
+    static func history(query: String?, from: Date?, to: Date?, limit: Int, offset: Int) throws
+        -> HistoryPage
+    {
         switch access(historyPath) {
         case .blocked:
             throw ToolError.fullDiskAccessRequired(what: "history", path: historyPath)
@@ -149,34 +151,51 @@ enum SafariLibrary {
 
         // Bound parameters throughout: the caller's text never becomes SQL. Numbered
         // rather than positional so an absent bound simply leaves its slot unbound.
-        let sql = """
-            SELECT items.url, visits.title, visits.visit_time, items.visit_count
+        let source = """
             FROM history_visits AS visits
             JOIN history_items AS items ON items.id = visits.history_item
             \(whereClause)
-            ORDER BY visits.visit_time DESC
-            LIMIT ?4
             """
+        // The visit's own row id breaks a tie between two visits at the same instant, so a
+        // page boundary falls in the same place on the next call.
+        let sql = """
+            SELECT items.url, visits.title, visits.visit_time, items.visit_count
+            \(source)
+            ORDER BY visits.visit_time DESC, visits.id DESC
+            LIMIT ?4 OFFSET ?5
+            """
+        let countSQL = "SELECT COUNT(*) \(source)"
 
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK, let statement
-        else {
-            throw ToolError.storeFailure(
-                "History query was rejected: \(String(cString: sqlite3_errmsg(database)))")
+        func prepare(_ text: String) throws -> OpaquePointer {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(database, text, -1, &statement, nil) == SQLITE_OK, let statement
+            else {
+                throw ToolError.storeFailure(
+                    "History query was rejected: \(String(cString: sqlite3_errmsg(database)))")
+            }
+            return statement
         }
+        func bindFilters(_ statement: OpaquePointer) {
+            if let query {
+                // SQLITE_TRANSIENT: SQLite copies the bytes rather than holding this pointer,
+                // which it would otherwise outlive.
+                let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+                sqlite3_bind_text(statement, 1, "%" + likeEscaped(query) + "%", -1, transient)
+            }
+            if let from { sqlite3_bind_double(statement, 2, from.timeIntervalSinceReferenceDate) }
+            if let to { sqlite3_bind_double(statement, 3, to.timeIntervalSinceReferenceDate) }
+        }
+
+        let counting = try prepare(countSQL)
+        defer { sqlite3_finalize(counting) }
+        bindFilters(counting)
+        let total = sqlite3_step(counting) == SQLITE_ROW ? Int(sqlite3_column_int64(counting, 0)) : 0
+
+        let statement = try prepare(sql)
         defer { sqlite3_finalize(statement) }
-
-        if let query {
-            // SQLITE_TRANSIENT: SQLite copies the bytes rather than holding this pointer,
-            // which it would otherwise outlive.
-            let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-            sqlite3_bind_text(statement, 1, "%" + likeEscaped(query) + "%", -1, transient)
-        }
-        if let from { sqlite3_bind_double(statement, 2, from.timeIntervalSinceReferenceDate) }
-        if let to { sqlite3_bind_double(statement, 3, to.timeIntervalSinceReferenceDate) }
-        // One more than asked for, so "there is more behind this" is a fact rather than a
-        // guess made from a full page.
-        sqlite3_bind_int(statement, 4, Int32(limit + 1))
+        bindFilters(statement)
+        sqlite3_bind_int64(statement, 4, Int64(limit))
+        sqlite3_bind_int64(statement, 5, Int64(offset))
 
         var results: [HistoryEntry] = []
         while sqlite3_step(statement) == SQLITE_ROW {
@@ -192,8 +211,7 @@ enum SafariLibrary {
                     visitCount: Int(sqlite3_column_int(statement, 3))))
         }
 
-        let truncated = results.count > limit
-        return HistoryPage(results: Array(results.prefix(limit)), truncated: truncated)
+        return HistoryPage(results: results, total: total)
     }
 
     /// `%` and `_` are wildcards in LIKE, so a query containing one would silently match

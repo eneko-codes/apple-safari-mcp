@@ -26,7 +26,11 @@ final class FakeSafariStore: SafariStore, @unchecked Sendable {
     private(set) var openedURLs: [String] = []
     private(set) var closedTabs: [TabID] = []
     private(set) var readingListItems: [(url: String, title: String?, previewText: String?)] = []
-    private(set) var historyQueries: [(query: String?, from: Date?, to: Date?, limit: Int)] = []
+    private(set) var historyQueries:
+        [(query: String?, from: Date?, to: Date?, limit: Int, offset: Int)] = []
+
+    /// Makes `windows()` and `tabSummary(_:)` wait this long, to stand in for a Safari that has stopped answering.
+    var windowsDelay: Duration?
     private(set) var scriptsRun: [(id: TabID, script: String)] = []
 
     /// What `runJavaScript` returns to whichever test set it, keyed by the exact script
@@ -51,7 +55,10 @@ final class FakeSafariStore: SafariStore, @unchecked Sendable {
     func availability() -> SafariAvailability { state }
     func libraryStatus() -> LibraryStatus { library }
 
-    func windows() async throws -> [WindowInfo] { windowList }
+    func windows() async throws -> [WindowInfo] {
+        if let windowsDelay { try await Task.sleep(for: windowsDelay) }
+        return windowList
+    }
 
     /// Resolves window and position exactly as the bridge does — by looking at what is
     /// there **now**, not at what the id claims. That is what lets a test hand over an id
@@ -63,18 +70,15 @@ final class FakeSafariStore: SafariStore, @unchecked Sendable {
         return tab
     }
 
-    func tabSummary(_ id: TabID) async throws -> TabSummary { try liveTab(id) }
+    func tabSummary(_ id: TabID) async throws -> TabSummary {
+        if let windowsDelay { try await Task.sleep(for: windowsDelay) }
+        return try liveTab(id)
+    }
 
-    func tabContent(_ id: TabID, kind: TabContentKind, characterLimit: Int) async throws
-        -> TabContent
-    {
+    func tabContent(_ id: TabID, kind: TabContentKind) async throws -> TabContent {
         let tab = try liveTab(id)
         let whole = (kind == .text ? pageText[tab.url] : pageSource[tab.url]) ?? ""
-        let truncated = whole.count > characterLimit
-        return TabContent(
-            id: id, title: tab.title, url: tab.url, kind: kind,
-            content: truncated ? String(whole.prefix(characterLimit)) : whole,
-            truncated: truncated, totalCharacters: whole.count)
+        return TabContent(id: id, title: tab.title, url: tab.url, kind: kind, content: whole)
     }
 
     func openURL(_ url: String) async throws -> OpenedTab {
@@ -113,8 +117,10 @@ final class FakeSafariStore: SafariStore, @unchecked Sendable {
         return bookmarkList
     }
 
-    func history(query: String?, from: Date?, to: Date?, limit: Int) async throws -> HistoryPage {
-        historyQueries.append((query, from, to, limit))
+    func history(query: String?, from: Date?, to: Date?, limit: Int, offset: Int) async throws
+        -> HistoryPage
+    {
+        historyQueries.append((query, from, to, limit, offset))
         if let historyFailure { throw historyFailure }
 
         var matches = historyEntries
@@ -128,7 +134,7 @@ final class FakeSafariStore: SafariStore, @unchecked Sendable {
         if let to { matches = matches.filter { $0.visitedAt < to } }
         matches.sort { $0.visitedAt > $1.visitedAt }
         return HistoryPage(
-            results: Array(matches.prefix(limit)), truncated: matches.count > limit)
+            results: Array(matches.dropFirst(offset).prefix(limit)), total: matches.count)
     }
 }
 

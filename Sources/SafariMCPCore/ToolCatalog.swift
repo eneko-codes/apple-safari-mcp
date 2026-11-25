@@ -1,4 +1,5 @@
 import Foundation
+import SafariBridge
 
 /// The catalogue is the authorisation surface: a tool that is not listed here cannot
 /// be called, and the name it is listed under is the label on the permission switch in
@@ -30,6 +31,54 @@ public enum ToolCatalog {
     public static let bookmarksListName = "bookmarks_list"
     public static let historySearchName = "history_search"
     public static let runJavaScriptName = "run_javascript"
+
+    // Pages. Each maximum is a number of rows of ordinary width that fits
+    // `ToolStandard.longestResult` with room to spare, and each default makes a call with no
+    // argument about `ToolStandard.usualPage` or less. `BoundsTests` renders a full page of
+    // the widest ordinary rows of every listing to hold both to that.
+    public static let offsetRange = 0...10_000_000
+    public static let tabLimitRange = 1...50
+    public static let defaultTabLimit = 15
+    public static let bookmarkLimitRange = 1...100
+    public static let defaultBookmarkLimit = 25
+    public static let historyLimitRange = 1...100
+    public static let defaultHistoryLimit = 25
+
+    /// A tab's title and URL are clipped to these widths in `tabs_list`, where fifty rows
+    /// have to fit one result; `tab_get_text` and `tab_get_source` show both in full.
+    public static let titleWidth = 150
+    public static let urlWidth = 300
+
+    /// The window on one long text. The maximum is half the longest result, so a window of
+    /// ordinary text leaves room for the rest of the answer, and `ToolStandard.fitting`
+    /// shrinks one whose characters take more UTF-16 units than that.
+    public static let characterOffsetRange = 0...100_000_000
+    public static let maxCharactersRange = 1...(ToolStandard.longestResult / 2)
+    public static let defaultMaxCharacters = ToolStandard.usualPage
+
+    /// How long one call may take before it is abandoned. Safari's own wait for a reply to
+    /// one Apple event is `SafariBridgeEventTimeoutSeconds`, shorter by a margin, so a call
+    /// that is stuck on Safari ends with Safari's answer and not with ours. Both sit well
+    /// inside `ToolStandard.timeLimit`.
+    public static let eventTimeoutSeconds = Int(SafariBridgeEventTimeoutSeconds)
+    public static let callDeadline = Duration.seconds(eventTimeoutSeconds + 10)
+
+    /// The longest piece of a failure's own wording that an error repeats.
+    public static let failureDetailWidth = 1_000
+
+    /// The tools that change something, whose timeout error must not claim nothing happened.
+    static let writeNames: Set<String> = [
+        openURLName, closeTabName, readingListAddName, runJavaScriptName,
+    ]
+
+    /// The argument names a tool's schema lists.
+    static func argumentNames(of toolName: String, _ configuration: Configuration) -> [String] {
+        guard let tool = all(configuration).first(where: { $0.name == toolName }),
+            case .object(let schema) = tool.inputSchema,
+            case .object(let properties)? = schema["properties"]
+        else { return [] }
+        return properties.keys.sorted()
+    }
 
     /// `tabSource` alone is built from the live configuration: whether it is enabled is
     /// the one thing left in `Configuration` that varies per instance. Every other
@@ -64,18 +113,39 @@ public enum ToolCatalog {
         .object(["type": .string("string"), "description": .string(description)])
     }
 
-    private static func integer(_ description: String, minimum: Int, maximum: Int, default def: Int)
+    private static func integer(_ description: String, range: ClosedRange<Int>, default def: Int)
         -> Value
     {
         .object([
             "type": .string("integer"), "description": .string(description),
-            "minimum": .int(minimum), "maximum": .int(maximum), "default": .int(def),
+            "minimum": .int(range.lowerBound), "maximum": .int(range.upperBound),
+            "default": .int(def),
         ])
     }
 
+    private static func limit(_ things: String, range: ClosedRange<Int>, default def: Int) -> Value {
+        integer("Maximum number of \(things) in one page.", range: range, default: def)
+    }
+
+    private static let offset = integer(
+        """
+        Number of rows to skip. A result that does not hold every row says, in its first \
+        lines, the offset to pass for the next page.
+        """, range: offsetRange, default: 0)
+
+    private static let characterOffset = integer(
+        """
+        Number of characters to skip. A result that does not hold the whole text says, in \
+        its first lines, the character_offset to pass for the rest.
+        """, range: characterOffsetRange, default: 0)
+
+    private static let maxCharacters = integer(
+        "Most characters of the text to return in one call.", range: maxCharactersRange,
+        default: defaultMaxCharacters)
+
     private static let dateHelp = """
         Accepts 2026-08-12 (whole day), 2026-08-12T09:00 (local time), or \
-        2026-08-12T09:00:00+02:00 (explicit offset).
+        2026-08-12T09:00:00+02:00 (explicit offset). A date that does not exist is refused.
         """
 
     private static let tabIDProperty = string(
@@ -108,15 +178,23 @@ public enum ToolCatalog {
         name: tabsListName,
         title: "List open tabs",
         description: """
-            Lists every Safari window and every tab in it, with the page title, the URL and \
-            the id needed to read or close that tab. Marks which tab is frontmost in each \
-            window.
+            Lists the open tabs, \(defaultTabLimit) to a page, grouped by window, with the \
+            page title, the URL and the id needed to read or close that tab. Marks which tab \
+            is frontmost in each window. Ordered by window id, then by position from the \
+            left. When more tabs exist than the page holds, the first lines of the result \
+            say how many there are and the offset of the next page: pass limit (up to \
+            \(tabLimitRange.upperBound)) and offset for the rest. A title or URL longer than \
+            \(titleWidth) or \(urlWidth) characters is clipped, and a first line says so: \
+            tab_get_text shows both in full.
 
             Call this before tab_get_text, tab_get_source or close_tab — ids come from here \
             and go stale as soon as tabs move. Safari must already be running; this server \
             will not launch it.
             """,
-        inputSchema: object(properties: [:]),
+        inputSchema: object(properties: [
+            "limit": limit("tabs", range: tabLimitRange, default: defaultTabLimit),
+            "offset": offset,
+        ]),
         annotations: .init(
             readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false)
     )
@@ -130,10 +208,18 @@ public enum ToolCatalog {
             No network fetch happens, so a page behind a login or a paywall reads \
             exactly as the person sees it.
 
-            One tab per call, cut at \(Configuration.pageCharacterLimit) characters, \
-            because a page can run to megabytes. Needs an id from tabs_list.
+            One tab per call, and the first \(defaultMaxCharacters) characters of its text \
+            unless asked for more, because a page can run to megabytes. When the page is \
+            longer, the first lines of the result say how many characters it has and the \
+            character_offset to pass for the rest; max_characters (up to \
+            \(maxCharactersRange.upperBound)) sets the size of a window. The title and URL \
+            are shown in full. Needs an id from tabs_list.
             """,
-        inputSchema: object(properties: ["id": tabIDProperty], required: ["id"]),
+        inputSchema: object(
+            properties: [
+                "id": tabIDProperty, "character_offset": characterOffset,
+                "max_characters": maxCharacters,
+            ], required: ["id"]),
         annotations: .init(
             readOnlyHint: true, destructiveHint: false, idempotentHint: true,
             openWorldHint: false)
@@ -154,10 +240,17 @@ public enum ToolCatalog {
                 the source does. Reach for source only when the markup itself is the \
                 question — a meta tag, a link's href, a structured-data block.
 
-                Cut at \(Configuration.pageCharacterLimit) characters. Needs an id from \
-                tabs_list.
+                Returns the first \(defaultMaxCharacters) characters unless asked for more; \
+                when the source is longer, the first lines of the result say how many \
+                characters it has and the character_offset to pass for the rest, and \
+                max_characters (up to \(maxCharactersRange.upperBound)) sets the size of a \
+                window. Needs an id from tabs_list.
                 """,
-            inputSchema: object(properties: ["id": tabIDProperty], required: ["id"]),
+            inputSchema: object(
+                properties: [
+                    "id": tabIDProperty, "character_offset": characterOffset,
+                    "max_characters": maxCharacters,
+                ], required: ["id"]),
             annotations: .init(
                 readOnlyHint: true, destructiveHint: false, idempotentHint: true,
                 openWorldHint: false)
@@ -169,7 +262,10 @@ public enum ToolCatalog {
         title: "List bookmarks",
         description: """
             Lists saved bookmarks with their title, URL and the folder path each sits \
-            in, optionally narrowed to one folder.
+            in, optionally narrowed to one folder, \(defaultBookmarkLimit) to a page, in the \
+            order of Safari's bookmark tree. When more match than the page holds, the first \
+            lines of the result say how many there are and the offset of the next page: \
+            pass limit (up to \(bookmarkLimitRange.upperBound)) and offset for the rest.
 
             Reads ~/Library/Safari/Bookmarks.plist, which needs Full Disk Access. \
             Without that grant the call fails with instructions rather than returning \
@@ -182,11 +278,8 @@ public enum ToolCatalog {
                 Optional folder path to narrow to, matched case-insensitively as a \
                 prefix — "News" matches "News" and "News/Spain". Omit for all of them.
                 """),
-            "limit": integer(
-                "Maximum number of bookmarks to return.",
-                minimum: Configuration.searchLimitRange.lowerBound,
-                maximum: Configuration.searchLimitRange.upperBound,
-                default: Configuration.searchLimit),
+            "limit": limit("bookmarks", range: bookmarkLimitRange, default: defaultBookmarkLimit),
+            "offset": offset,
         ]),
         annotations: .init(
             readOnlyHint: true, destructiveHint: false, idempotentHint: true,
@@ -198,7 +291,10 @@ public enum ToolCatalog {
         title: "Search browsing history",
         description: """
             Finds pages Safari has visited, matching the text against the URL and the \
-            page title and bounded by a date range. Newest first.
+            page title and bounded by a date range, \(defaultHistoryLimit) to a page, newest \
+            first. When more match than the page holds, the first lines of the result say \
+            how many there are and the offset of the next page: pass limit (up to \
+            \(historyLimitRange.upperBound)) and offset for the rest.
 
             Reads ~/Library/Safari/History.db, which needs Full Disk Access. Without \
             that grant the call fails with instructions rather than returning an empty \
@@ -209,13 +305,11 @@ public enum ToolCatalog {
         inputSchema: object(properties: [
             "query": string(
                 "Optional text to match against the URL and the page title."),
-            "from": string("Oldest visit to include. \(dateHelp)"),
-            "to": string("Newest visit to include. \(dateHelp)"),
-            "limit": integer(
-                "Maximum number of visits to return.",
-                minimum: Configuration.searchLimitRange.lowerBound,
-                maximum: Configuration.searchLimitRange.upperBound,
-                default: Configuration.searchLimit),
+            "from_date": string("Oldest visit to include. \(dateHelp)"),
+            "to_date": string(
+                "Newest visit to include, inclusive at the precision written: a bare day covers that whole day. \(dateHelp)"),
+            "limit": limit("visits", range: historyLimitRange, default: defaultHistoryLimit),
+            "offset": offset,
         ]),
         annotations: .init(
             readOnlyHint: true, destructiveHint: false, idempotentHint: true,
@@ -322,12 +416,17 @@ public enum ToolCatalog {
 
                 Needs an id from tabs_list. Returns the result as text: a string as \
                 itself, an object or array as JSON, and "(no value)" for a script that \
-                returned nothing.
+                returned nothing. Only the first \(defaultMaxCharacters) characters of the \
+                result are returned unless max_characters (up to \
+                \(maxCharactersRange.upperBound)) asks for more; the rest of a longer result \
+                cannot be read again without running the script again, so return less \
+                from the script or ask for more before running it.
                 """,
             inputSchema: object(
                 properties: [
                     "id": tabIDProperty,
                     "script": string("The JavaScript to run, evaluated as the body of a function."),
+                    "max_characters": maxCharacters,
                     "confirm": .object([
                         "type": .string("boolean"),
                         "description": .string("Must be true. Without it the call is refused."),

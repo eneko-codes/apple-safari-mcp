@@ -134,17 +134,6 @@ struct SafariToolsTests {
         #expect(text.contains("tabs_list"))
     }
 
-    @Test("A page longer than the fixed ceiling is truncated and says so")
-    func longPageIsTruncated() async {
-        let store = FakeSafariStore()
-        let pageLength = Configuration.pageCharacterLimit + 500
-        store.pageText = [Fixtures.articleURL: String(repeating: "x", count: pageLength)]
-
-        let (text, isError) = await call(
-            ToolCatalog.tabTextName, ["id": .string(articleTabID)], store: store)
-        #expect(!isError)
-        #expect(text.count < pageLength)
-    }
 
     /// `tab_get_source` is a second, separate opt-in from `tab_get_text`: raw HTML carries
     /// inline scripts and embedded tokens that the rendered text does not, so it stays off
@@ -293,7 +282,7 @@ struct SafariToolsTests {
         let store = FakeSafariStore()
         let (_, isError) = await call(
             ToolCatalog.historySearchName,
-            ["query": .string("swift"), "from": .string("2026-08-01")], store: store)
+            ["query": .string("swift"), "from_date": .string("2026-08-01")], store: store)
         #expect(!isError)
         #expect(store.historyQueries.first?.query == "swift")
         #expect(store.historyQueries.first?.from != nil)
@@ -308,7 +297,7 @@ struct SafariToolsTests {
         for spelling in spellings {
             let store = FakeSafariStore()
             let (_, isError) = await call(
-                ToolCatalog.historySearchName, ["from": .string(spelling)], store: store)
+                ToolCatalog.historySearchName, ["from_date": .string(spelling)], store: store)
             #expect(!isError, "\(spelling)")
             #expect(store.historyQueries.first?.from == instant, "\(spelling)")
         }
@@ -318,7 +307,7 @@ struct SafariToolsTests {
     func historyRefusesAmbiguousOffset() async {
         let store = FakeSafariStore()
         let (_, isError) = await call(
-            ToolCatalog.historySearchName, ["from": .string("2026-08-12T09:00-05:00")],
+            ToolCatalog.historySearchName, ["from_date": .string("2026-08-12T09:00-05:00")],
             store: store)
         #expect(isError)
         #expect(store.historyQueries.isEmpty)

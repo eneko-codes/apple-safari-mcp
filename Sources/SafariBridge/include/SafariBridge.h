@@ -4,6 +4,12 @@ NS_ASSUME_NONNULL_BEGIN
 
 extern NSString *const SafariBridgeErrorDomain;
 
+/// How long one Apple event may wait for Safari's reply. Scripting Bridge counts the
+/// timeout in ticks of 1/60 second (Apple Event Manager), and its default is about a
+/// minute; setting it here keeps the wait inside the deadline Swift puts on a whole call,
+/// so a call stuck on Safari ends with Safari's own timeout error.
+#define SafariBridgeEventTimeoutSeconds 50
+
 /// Typed because Swift imports an `NSError **` method as `throws`, which would otherwise
 /// flatten "that window has no tab at that position" — an ordinary outcome, since tab
 /// positions shift whenever a tab is closed or dragged — into the same channel as a real

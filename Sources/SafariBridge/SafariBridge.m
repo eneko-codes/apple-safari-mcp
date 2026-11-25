@@ -101,6 +101,7 @@ static NSString *const SafariBundleIdentifier = @"com.apple.Safari";
         }
         return nil;
     }
+    application.timeout = SafariBridgeEventTimeoutSeconds * 60;
     // No launch flag is set to keep Safari from starting, because none exists: the guard
     // is the isSafariRunning check above. Launching an app on the owner's behalf is a
     // side effect they did not ask for, and Scripting Bridge offers no way to forbid it.

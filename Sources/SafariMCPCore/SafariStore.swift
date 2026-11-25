@@ -77,11 +77,8 @@ public protocol SafariStore: Sendable {
     /// that reads or closes a tab: two properties instead of a whole rendered page.
     func tabSummary(_ id: TabID) async throws -> TabSummary
 
-    /// `characterLimit` is passed per call rather than held by the store so that the
-    /// value the tools enforce and the value `safari_status` reports cannot be two
-    /// different numbers.
-    func tabContent(_ id: TabID, kind: TabContentKind, characterLimit: Int) async throws
-        -> TabContent
+    /// The whole text or source of the tab; the tool layer cuts the window.
+    func tabContent(_ id: TabID, kind: TabContentKind) async throws -> TabContent
 
     func openURL(_ url: String) async throws -> OpenedTab
 
@@ -109,8 +106,11 @@ public protocol SafariStore: Sendable {
     /// mean "blocked".
     func bookmarks() async throws -> [Bookmark]
 
-    /// Filtered in SQL rather than above the seam: a history database holds hundreds of
-    /// thousands of rows, which is the one case where the filter has to go down with the
-    /// query. Throws when Full Disk Access is missing.
-    func history(query: String?, from: Date?, to: Date?, limit: Int) async throws -> HistoryPage
+    /// Filtered and paged in SQL rather than above the seam: a history database holds
+    /// hundreds of thousands of rows, which is the one case where the filter and the page
+    /// have to go down with the query. Newest visit first, ties broken by the visit's own
+    /// row id so that two pages never overlap. `to` is exclusive. `total` counts every match.
+    /// Throws when Full Disk Access is missing.
+    func history(query: String?, from: Date?, to: Date?, limit: Int, offset: Int) async throws
+        -> HistoryPage
 }

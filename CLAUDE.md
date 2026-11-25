@@ -16,7 +16,9 @@ Reading a real tab is reading the owner's screen, and `close_tab` and `run_javas
 
 A local MCP server (Swift 6, stdio transport) exposing Safari through Apple events, plus two tools that read Safari's own files (bookmarks, history). No network of its own. Safari must already be running; this server never launches it. **No third-party dependency**: `Package.swift` lists none, and the MCP protocol (JSON-RPC over stdio) is `MCPServer.swift` over Foundation. Adding a package needs the owner's say-so.
 
-**`MCPServer.swift`, `Value.swift` and `Tests/…/MCPProtocolTests.swift` are copied unchanged into every one of the owner's MCP servers** (the test file differs only in its `@testable import`). A change to one is made to every copy in the same piece of work; never let a copy drift.
+**`MCPServer.swift`, `Value.swift`, `ToolStandard.swift` and the tests `MCPProtocolTests.swift` and `ToolStandardTests.swift` are copied unchanged into every one of the owner's MCP servers** (the test files differ only in their `@testable import`). A change to one is made to every copy in the same piece of work; never let a copy drift.
+
+`ToolStandard.swift` holds what every tool here must keep to: the longest result, description and error, the time a call may take, the fixed wording of each notice that says what a result left out (`Notice`), and the guard `MCPServer.swift` passes every result through. A tool bounds its own result and says how to get the rest; the guard only catches the one that forgot.
 
 ## Apple technology
 
@@ -49,6 +51,8 @@ holds any other architecture. A universal build doubles the bundle for an archit
 macOS 26 is the last release to support. Do not add an x86_64 slice back.
 
 **An idle server must not poll stdin.** The MCP Swift SDK's `StdioTransport` (0.12.1) set stdin non-blocking and slept 10 ms between empty reads, which kept an idle server waking a hundred times a second; that is why this server once carried its own transport. The shared `serveStandardStreams` reads through `FileHandle.bytes.lines`, which leaves stdin blocking and does not wake while it is silent. `StandardStreamsTests` starts the built server with stdin open and counts its wakeups over an idle second to catch a regression.
+
+**How a tool keeps to the tool standard here.** Sizes are constants in `ToolCatalog`, and the schemas, the descriptions and the instructions quote them by interpolation, never as literals. `Arguments.int` moves a quantity (`limit`, `offset`, a window) into its range and collects the sentence that says so in `notices`; an argument the tool's schema does not list is refused. A listing sorts its rows into an order it states and goes through `Format.page`, which puts the notices, the page's position (`Notice.page`) and any clipped-field notice before the data; `history_search` pages inside SQLite and passes the total back. `tab_get_text` and `tab_get_source` read the whole text from Safari and cut a window with `ToolStandard.window`. A script's result cannot be read twice, so `run_javascript` cuts it with the standard's sentence for that and has no offset. Every page and window renders through `ToolStandard.fitting`, so a tool never leans on the guard. `Deadline`, which abandons a call at its time limit, is part of `ToolStandard.swift`; `SafariBridgeEventTimeoutSeconds` (in the bridge header) is Safari's own wait for one Apple event and `ToolCatalog.callDeadline` is the whole call's, both inside `ToolStandard.timeLimit`. `BoundsTests` holds every bound, notice and length to this: a new listing takes `limit` and `offset` through `Arguments.page` and gets an entry in its `listings`. The README and the manifest state no figure the code owns; a test keeps it so.
 
 ## Diagnostics
 
