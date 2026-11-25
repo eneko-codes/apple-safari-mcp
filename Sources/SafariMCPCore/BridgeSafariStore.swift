@@ -112,22 +112,14 @@ public struct BridgeSafariStore: SafariStore {
             isCurrent: false)
     }
 
-    public func tabContent(_ id: TabID, kind: TabContentKind, characterLimit: Int) async throws
-        -> TabContent
-    {
+    public func tabContent(_ id: TabID, kind: TabContentKind) async throws -> TabContent {
         let raw = try read(id, includeText: kind == .text, includeSource: kind == .source)
-        let whole = raw[kind.rawValue] as? String ?? ""
-        // Counted in characters rather than bytes: the limit exists to bound what a model
-        // has to read, and that is what a character is closer to.
-        let truncated = whole.count > characterLimit
         return TabContent(
             id: id,
             title: raw["name"] as? String ?? "",
             url: raw["url"] as? String ?? "",
             kind: kind,
-            content: truncated ? String(whole.prefix(characterLimit)) : whole,
-            truncated: truncated,
-            totalCharacters: whole.count)
+            content: raw[kind.rawValue] as? String ?? "")
     }
 
     private func read(_ id: TabID, includeText: Bool, includeSource: Bool) throws
@@ -226,9 +218,9 @@ public struct BridgeSafariStore: SafariStore {
 
     public func bookmarks() async throws -> [Bookmark] { try SafariLibrary.bookmarks() }
 
-    public func history(query: String?, from: Date?, to: Date?, limit: Int) async throws
-        -> HistoryPage
+    public func history(query: String?, from: Date?, to: Date?, limit: Int, offset: Int)
+        async throws -> HistoryPage
     {
-        try SafariLibrary.history(query: query, from: from, to: to, limit: limit)
+        try SafariLibrary.history(query: query, from: from, to: to, limit: limit, offset: offset)
     }
 }

@@ -25,15 +25,41 @@ Not affiliated with or endorsed by Apple Inc.
 | Tool | Kind | What it does |
 |---|---|---|
 | `safari_status` | read | Reports whether Safari is running, whether this server may control it, and whether bookmarks and history on disk can be read. Opens no page and reads no tab. |
-| `tabs_list` | read | Every window and every tab in it — title, URL and the id needed to read or close it. Marks the frontmost tab in each window. |
-| `tab_get_text` | read | Rendered text of a tab already open, cut at 40,000 characters. No network fetch: it reads whatever Safari already loaded. |
-| `tab_get_source` | read | Raw HTML of a tab already open. **Off by default**, and currently cannot be turned on through the packaged extension — see [Known limits](#known-limits). |
+| `tabs_list` | read | The open tabs, a page at a time and grouped by window — title, URL and the id needed to read or close each. Marks the frontmost tab in each window. |
+| `tab_get_text` | read | Rendered text of a tab already open, one window of characters at a time. No network fetch: it reads whatever Safari already loaded. |
+| `tab_get_source` | read | Raw HTML of a tab already open, one window of characters at a time. **Off by default**, and currently cannot be turned on through the packaged extension — see [Known limits](#known-limits). |
 | `open_url` | write | Opens a URL in a new tab in the frontmost window. Only `http` and `https`. |
 | `close_tab` | **destructive** | Closes one tab. Requires `confirm: true`. Cannot be undone from here. |
 | `reading_list_add` | write | Saves a URL to Safari's Reading List, with an optional title and preview line. Only `http` and `https`. |
-| `bookmarks_list` | read | Saved bookmarks, with title, URL and folder path. Needs Full Disk Access. |
-| `history_search` | read | Visited pages, matched by URL/title text and a date range, newest first. Needs Full Disk Access. |
+| `bookmarks_list` | read | Saved bookmarks, a page at a time, with title, URL and folder path. Needs Full Disk Access. |
+| `history_search` | read | Visited pages, a page at a time, matched by URL/title text and a date range (`from_date`, `to_date`), newest first. Needs Full Disk Access. |
 | `run_javascript` | **destructive** | Runs JavaScript in a tab already open, in whatever session it holds. Requires `confirm: true`. **Off by default** — see [Tool switches](#tool-switches). |
+
+## How results are bounded
+
+Every result stays below the longest a client will pass into a conversation, and says in
+its first lines whatever it leaves out and the exact call that returns it.
+
+- **Listings** (`tabs_list`, `bookmarks_list`, `history_search`) return one page, in a
+  stated order, and take `limit` and `offset`. A page that does not hold every match says
+  `Showing <first>–<last> of <total> visits. Pass offset=<last> for the next page.` before
+  the rows.
+  `history_search` pages inside the database, so the total is counted there too.
+- **One long text** (`tab_get_text`, `tab_get_source`) is read through a window:
+  `character_offset` and `max_characters`. The first lines say
+  `Characters <first>–<last> of <total>. Pass character_offset=<last> for the rest.`
+- **A script's result** (`run_javascript`) is cut at `max_characters`. The script cannot
+  be run a second time to read the rest — it may have changed the page — so the notice says
+  `Cut at <limit> of <total> characters; the rest cannot be read again.` Return less from
+  the script, or ask for a larger `max_characters` before running it.
+- **A number outside its range** is moved to the nearest allowed value and the result says
+  which was used. A wrong type, a date that does not exist or a range that ends before it
+  starts is refused with the form expected, and so is an argument the tool does not list.
+- **A call that does not finish** within its deadline is abandoned. For `open_url`,
+  `close_tab`, `reading_list_add` and `run_javascript` the error says the change may still
+  have been made.
+- In `tabs_list` a long title or URL is clipped, with a notice; `tab_get_text` shows both in
+  full. Bookmarks and history rows are never clipped.
 
 ## Frameworks and APIs
 
@@ -255,8 +281,9 @@ section.
   during development.
 - **Safari must already be running.** This server will not launch it — starting a browser
   is a visible side effect nobody asked for.
-- **Page text and source are capped at 40,000 characters per call.** A long page is
-  truncated, and the response says so.
+- **A single title or URL longer than a whole result cannot be shown in one piece.** The
+  bookmarks and history listings never clip a row and have no tool that reads one row in
+  full, so such a value would be cut by the server's last-resort guard, with a notice.
 
 ## Development
 

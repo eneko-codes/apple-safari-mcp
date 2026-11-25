@@ -16,6 +16,16 @@ public enum ToolError: Error, Equatable {
     case libraryFileMissing(what: String, path: String)
     case javascriptRefused(String)
     case storeFailure(String)
+    case unknownArgument(name: String, others: Int, allowed: [String])
+    case unknownTool(String)
+    /// `changes` is whether the tool writes: a call that timed out may still have done it.
+    case timedOut(seconds: Int, changes: Bool)
+
+    /// A failure's own wording, cut so that an error never carries a page of text.
+    static func clipped(_ detail: String) -> String {
+        detail.count > ToolCatalog.failureDetailWidth
+            ? String(detail.prefix(ToolCatalog.failureDetailWidth)) + "…" : detail
+    }
 
     public var message: String {
         switch self {
@@ -26,18 +36,43 @@ public enum ToolError: Error, Equatable {
             return "Missing required argument '\(name)'."
 
         case .badArgument(let name, let reason):
-            return "Argument '\(name)' is not valid: \(reason)"
+            return "Argument '\(ToolStandard.echo(name))' is not valid: \(reason)"
+
+        case .unknownArgument(let name, let others, let allowed):
+            let more = others > 0 ? " (and \(others) more)" : ""
+            let list =
+                allowed.isEmpty
+                ? "This tool takes no arguments."
+                : "The arguments it takes are: " + allowed.joined(separator: ", ") + "."
+            return "'\(ToolStandard.echo(name))'\(more) is not an argument of this tool. \(list)"
+
+        case .unknownTool(let name):
+            return "'\(ToolStandard.echo(name))' is not a tool of this server."
+
+        case .timedOut(let seconds, let changes):
+            let effect =
+                changes
+                ? "The change may still have been made: check with tabs_list before sending it again."
+                : "This call only reads, so nothing was changed."
+            return """
+                The call did not finish within \(seconds) seconds and was abandoned. \(effect)
+
+                Safari may be waiting on something that is not answering, such as a dialog or \
+                a page that is still loading. Try again with a narrower call: a lower limit, \
+                or for history_search a query or a shorter date range. safari_status says \
+                whether the server still answers at all.
+                """
 
         case .badDate(let argument, let value):
             return """
-                Argument '\(argument)' is not a date this server accepts: '\(value)'
+                Argument '\(argument)' is not a date this server accepts: '\(ToolStandard.echo(value))'
 
                 Use 2026-08-12, 2026-08-12T09:00, or 2026-08-12T09:00:00+02:00.
                 """
 
         case .badIdentifier(let raw):
             return """
-                '\(raw)' is not a tab id from this server.
+                '\(ToolStandard.echo(raw))' is not a tab id from this server.
 
                 Tab ids are opaque tokens produced by tabs_list. They cannot be typed by
                 hand, and a window number or a tab position is not one.
@@ -45,7 +80,7 @@ public enum ToolError: Error, Equatable {
 
         case .tabGone(let id):
             return """
-                No open tab answers to id '\(id)'.
+                No open tab answers to id '\(ToolStandard.echo(id))'.
 
                 The window was closed, or the tab was — a tab id names a position in a
                 window, and there is nothing at that position any more. Run tabs_list
@@ -57,10 +92,10 @@ public enum ToolError: Error, Equatable {
         // neighbour of the tab that was meant.
         case .tabChanged(let id, let url):
             return """
-                The tab id '\(id)' no longer points at the page it was made for.
+                The tab id '\(ToolStandard.echo(id))' no longer points at the page it was made for.
 
                 What is at that position now:
-                  \(url)
+                  \(ToolStandard.echo(url))
 
                 Either the tabs were reordered, or that tab navigated somewhere else.
                 Nothing was read and nothing was closed. Run tabs_list again and use the
@@ -69,7 +104,7 @@ public enum ToolError: Error, Equatable {
 
         case .unsupportedScheme(let url, let scheme):
             return """
-                This server only opens http and https URLs, and '\(url)' is '\(scheme)'.
+                This server only opens http and https URLs, and '\(ToolStandard.echo(url))' is '\(ToolStandard.echo(scheme))'.
 
                 A 'javascript:' URL is the do-JavaScript command wearing a different hat:
                 it executes inside whatever session is signed in. 'file:' and 'data:'
@@ -137,7 +172,7 @@ public enum ToolError: Error, Equatable {
 
         case .javascriptRefused(let detail):
             return """
-                Safari refused to run the script: \(detail)
+                Safari refused to run the script: \(Self.clipped(detail))
 
                 The one cause seen in practice is Safari's own developer setting for this
                 exact command being off, which is off by default on every Mac:
@@ -160,7 +195,7 @@ public enum ToolError: Error, Equatable {
                 """
 
         case .storeFailure(let detail):
-            return "Safari returned an error: \(detail)"
+            return "Safari returned an error: \(Self.clipped(detail))"
         }
     }
 

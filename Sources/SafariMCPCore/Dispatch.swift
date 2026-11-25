@@ -10,34 +10,58 @@ public struct SafariTools: ToolHandler {
     private let calendar: Calendar
     private let configuration: Configuration
     private let format: Format
+    private let deadline: Duration
 
     public init(
         store: any SafariStore,
         calendar: Calendar = .current,
-        configuration: Configuration = Configuration()
+        configuration: Configuration = Configuration(),
+        deadline: Duration = ToolCatalog.callDeadline
     ) {
         self.store = store
         self.calendar = calendar
         self.configuration = configuration
         self.format = Format(calendar: calendar)
+        self.deadline = deadline
     }
 
     public func handle(_ parameters: ToolCall) async -> ToolOutput {
         let started = ContinuousClock.now
-        do {
-            return ToolOutput(text: try await run(parameters), isError: false)
-        } catch let error as ToolError {
+        // The work is abandoned at the deadline, not stopped: a call stuck inside Safari
+        // holds its thread, and a late result is discarded.
+        let outcome = await Deadline.run(within: deadline) {
+            do {
+                return Result<String, any Error>.success(try await run(parameters))
+            } catch {
+                return .failure(error)
+            }
+        }
+        switch outcome {
+        case .success(let text)?:
+            return ToolOutput(text: text, isError: false)
+        case .failure(let error)?:
             Diagnostics.toolFailed(parameters.name, error: error, since: started)
-            return ToolOutput(text: error.message, isError: true)
-        } catch {
-            Diagnostics.toolFailed(parameters.name, error: error, since: started)
+            if let error = error as? ToolError {
+                return ToolOutput(text: error.message, isError: true)
+            }
             return ToolOutput(
                 text: ToolError.storeFailure(error.localizedDescription).message, isError: true)
+        case nil:
+            let timeout = ToolError.timedOut(
+                seconds: Int(deadline.components.seconds),
+                changes: ToolCatalog.writeNames.contains(parameters.name))
+            Diagnostics.toolFailed(parameters.name, error: timeout, since: started)
+            return ToolOutput(text: timeout.message, isError: true)
         }
     }
 
     private func run(_ parameters: ToolCall) async throws -> String {
         let arguments = Arguments(parameters.arguments, calendar: calendar)
+        guard ToolCatalog.all(configuration).contains(where: { $0.name == parameters.name }) else {
+            throw ToolError.unknownTool(parameters.name)
+        }
+        try arguments.refuseUnknown(
+            allowed: ToolCatalog.argumentNames(of: parameters.name, configuration))
 
         if parameters.name == ToolCatalog.statusName {
             return format.status(
@@ -60,7 +84,7 @@ public struct SafariTools: ToolHandler {
 
         switch parameters.name {
         case ToolCatalog.tabsListName:
-            return format.windowList(try await store.windows())
+            return try await tabs(arguments)
 
         case ToolCatalog.tabTextName:
             return try await tabContent(arguments, kind: .text)
@@ -83,8 +107,7 @@ public struct SafariTools: ToolHandler {
             return try await runJavaScript(arguments)
 
         default:
-            throw ToolError.badArgument(
-                name: "name", reason: "'\(parameters.name)' is not a tool of this server")
+            throw ToolError.unknownTool(parameters.name)
         }
     }
 
@@ -111,12 +134,25 @@ public struct SafariTools: ToolHandler {
         return live
     }
 
+    private func tabs(_ arguments: Arguments) async throws -> String {
+        let page = try arguments.page(
+            defaultLimit: ToolCatalog.defaultTabLimit, limits: ToolCatalog.tabLimitRange)
+        let windows = try await store.windows()
+        let rows = Format.tabRows(windows)
+        return format.tabList(
+            Array(rows.dropFirst(page.offset).prefix(page.limit)), offset: page.offset,
+            total: rows.count, windows: windows.filter { !$0.tabs.isEmpty }.count,
+            limit: page.limit, notices: arguments.notices)
+    }
+
     private func tabContent(_ arguments: Arguments, kind: TabContentKind) async throws -> String {
         let id = try arguments.tabID("id")
+        let window = try arguments.window()
         _ = try await verified(id)
-        let content = try await store.tabContent(
-            id, kind: kind, characterLimit: Configuration.pageCharacterLimit)
-        return format.tabContent(content)
+        let content = try await store.tabContent(id, kind: kind)
+        return format.tabContent(
+            content, characterOffset: window.characterOffset,
+            maxCharacters: window.maxCharacters, notices: arguments.notices)
     }
 
     private func closeTab(_ arguments: Arguments) async throws -> String {
@@ -125,7 +161,7 @@ public struct SafariTools: ToolHandler {
         // rather than as a missing confirmation — the caller would otherwise re-send with
         // confirm=true and close the wrong tab.
         _ = try await verified(id)
-        guard arguments.bool("confirm") else {
+        guard try arguments.bool("confirm") else {
             throw ToolError.confirmationRequired(action: "Closing a tab")
         }
         return format.closed(try await store.closeTab(id))
@@ -134,66 +170,71 @@ public struct SafariTools: ToolHandler {
     private func runJavaScript(_ arguments: Arguments) async throws -> String {
         let id = try arguments.tabID("id")
         let script = try arguments.requiredString("script")
+        let maxCharacters = try arguments.maxCharacters()
         // Verified before the confirmation is checked, for the same reason close_tab
         // does: a stale id is reported as stale rather than as a missing confirmation,
         // so the caller does not re-send with confirm=true against the wrong tab.
         _ = try await verified(id)
-        guard arguments.bool("confirm") else {
+        guard try arguments.bool("confirm") else {
             throw ToolError.confirmationRequired(action: "Running a script")
         }
-        return format.javascriptResult(try await store.runJavaScript(id, script: script))
+        return format.javascriptResult(
+            try await store.runJavaScript(id, script: script), maxCharacters: maxCharacters,
+            notices: arguments.notices)
     }
 
     private func addToReadingList(_ arguments: Arguments) async throws -> String {
         let url = try arguments.webURL("url")
-        let title = arguments.optionalString("title")
+        let title = try arguments.optionalString("title")
         try await store.addReadingListItem(
-            url: url, title: title, previewText: arguments.optionalString("preview_text"))
+            url: url, title: title, previewText: try arguments.optionalString("preview_text"))
         return format.readingListAdded(url: url, title: title)
     }
 
     // MARK: Library
 
     private func bookmarks(_ arguments: Arguments) async throws -> String {
+        let folder = try arguments.optionalString("folder")
+        let page = try arguments.page(
+            defaultLimit: ToolCatalog.defaultBookmarkLimit, limits: ToolCatalog.bookmarkLimitRange)
         let all = try await store.bookmarks()
-        let folder = arguments.optionalString("folder")
-        let limit = try arguments.int(
-            "limit", default: Configuration.searchLimit, in: Configuration.searchLimitRange)
 
         // Filtered above the seam because a bookmark file holds hundreds of rows, not
-        // millions: the store hands over what it read and the policy stays testable.
+        // millions: the store hands over what it read and the policy stays testable. The
+        // order is the file's own, which does not change between two calls.
         var matches = all
         if let folder {
             matches = matches.filter {
                 $0.folderPath.lowercased().hasPrefix(folder.lowercased())
             }
         }
-        let total = matches.count
-        return format.bookmarkList(Array(matches.prefix(limit)), folder: folder, total: total)
+        return format.bookmarkList(
+            Array(matches.dropFirst(page.offset).prefix(page.limit)), offset: page.offset,
+            total: matches.count, limit: page.limit, folder: folder, notices: arguments.notices)
     }
 
     private func history(_ arguments: Arguments) async throws -> String {
-        let from = try arguments.optionalDate("from")
-        let to = try arguments.optionalDate("to")
+        let from = try arguments.optionalDate("from_date")
+        let to = try arguments.optionalDate("to_date")
 
-        // A bare day as an upper bound means the whole of that day. Stopping at its
-        // midnight would silently drop everything the person did today, which is the
-        // range they most often mean.
-        var upperBound = to?.date
-        if let to, to.isDateOnly {
-            upperBound = calendar.date(byAdding: .day, value: 1, to: to.date)
-        }
-        if let lower = from?.date, let upper = upperBound, upper < lower {
+        // The end is inclusive at the precision the caller wrote: a bare day covers all of
+        // that day, and stopping at its midnight would silently drop everything done today,
+        // which is the range most often meant. The store takes an exclusive bound.
+        let upperBound = to.map { arguments.exclusiveEnd(of: $0.date, precision: $0.precision) }
+        if let lower = from?.date, let upper = upperBound, upper <= lower {
             throw ToolError.badArgument(
-                name: "to", reason: "it is before 'from'; a range cannot end before it starts")
+                name: "to_date",
+                reason: "it is before 'from_date'; a range cannot end before it starts")
         }
 
-        let limit = try arguments.int(
-            "limit", default: Configuration.searchLimit, in: Configuration.searchLimitRange)
-        let query = arguments.optionalString("query")
-        let page = try await store.history(
-            query: query, from: from?.date, to: upperBound, limit: limit)
-        return format.historyResults(page, query: query, from: from?.date, to: to?.date)
+        let page = try arguments.page(
+            defaultLimit: ToolCatalog.defaultHistoryLimit, limits: ToolCatalog.historyLimitRange)
+        let query = try arguments.optionalString("query")
+        let results = try await store.history(
+            query: query, from: from?.date, to: upperBound, limit: page.limit, offset: page.offset)
+        return format.historyResults(
+            results, offset: page.offset, limit: page.limit, query: query, fromDate: from?.date,
+            toDate: to?.date, notices: arguments.notices)
     }
 
     static var binaryPath: String {

@@ -3,7 +3,7 @@ import Foundation
 public enum SafariMCPServer {
 
     public static let name = "apple-safari-mcp"
-    public static let version = "1.1.3"
+    public static let version = "2.0.0"
 
     /// Returned from `initialize`. It carries what per-tool descriptions cannot state
     /// once: the id workflow, the two unrelated permissions, and what reading a tab
@@ -33,6 +33,24 @@ public enum SafariMCPServer {
         default on every Mac. A javascript: URL passed to open_url is still refused: it \
         is the same command reached by a different route, and run_javascript is the one \
         way in.
+
+        LISTS COME IN PAGES. tabs_list, bookmarks_list and history_search return one page \
+        of rows (\(ToolCatalog.defaultTabLimit), \(ToolCatalog.defaultBookmarkLimit) and \
+        \(ToolCatalog.defaultHistoryLimit) by default). When rows exist that a result does \
+        not hold, its first lines say how many there are and the offset of the next page: \
+        pass limit and offset. A long page or HTML source is read one window at a time: \
+        the first \(ToolCatalog.defaultMaxCharacters) characters of tab_get_text and \
+        tab_get_source come back, and the first lines give the character_offset for the \
+        rest. A number outside its range is moved to the nearest allowed value and the \
+        first lines say which one was used; an argument a tool does not list is refused.
+
+        A script's result is cut at max_characters. The rest cannot be read again, because \
+        the script cannot safely be run twice: return less from it.
+
+        EVERY CALL IS BOUNDED. A call that has not finished after \
+        \(ToolCatalog.callDeadline.components.seconds) seconds is abandoned and answered \
+        with an error saying so. For open_url, close_tab, reading_list_add and \
+        run_javascript that error says the change may still have been made.
 
         close_tab is irreversible from here: a closed tab takes its scroll position, its \
         back history and anything typed into the page with it. It requires confirm=true.
